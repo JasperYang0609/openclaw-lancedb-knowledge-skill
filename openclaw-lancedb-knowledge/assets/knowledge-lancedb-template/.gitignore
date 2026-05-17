@@ -1,0 +1,7 @@
+node_modules/
+data/lancedb/
+data/embedding-cache/
+data/*.json
+reports/*.json
+reports/cron-logs/
+.env

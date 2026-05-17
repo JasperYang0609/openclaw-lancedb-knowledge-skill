@@ -1,0 +1,20 @@
+{
+  "name": "knowledge-lancedb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local LanceDB knowledge index for OpenClaw project memory and backups",
+  "scripts": {
+    "scan": "node src/cli.js scan",
+    "index": "node src/cli.js index",
+    "search": "node src/cli.js search",
+    "status": "node src/cli.js status",
+    "test": "node --test",
+    "incremental": "node src/cli.js incremental",
+    "sync-state": "node src/cli.js sync-state"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.27.2"
+  },
+  "devDependencies": {}
+}

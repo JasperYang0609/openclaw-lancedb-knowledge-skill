@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "dbPath": "./data/lancedb",
+  "tableName": "knowledge_chunks",
+  "embedding": {
+    "provider": "local-hash-v1",
+    "model": "local-hash-v1",
+    "dimensions": 384,
+    "privacyApprovedAt": null,
+    "privacyApprovedBy": null
+  },
+  "maxFileBytes": 1200000,
+  "sources": [
+    {
+      "id": "workspace-memory",
+      "project": "OpenClawOps",
+      "sourceType": "memory",
+      "root": "__OPENCLAW_WORKSPACE__/memory",
+      "include": ["**/*.md"],
+      "exclude": ["**/*.bak*", "**/*secret*", "**/*token*"],
+      "priority": 0
+    },
+    {
+      "id": "discord-backup-summary",
+      "project": "DiscordBackups",
+      "sourceType": "backup_summary",
+      "root": "__DISCORD_BACKUP_ROOT__",
+      "include": ["**/summary/**/*.md", "**/*摘要*.md", "**/*summary*.md"],
+      "exclude": ["**/raw/**", "**/legacy/**", "**/legacy_docs/**"],
+      "priority": 0
+    },
+    {
+      "id": "project-docs",
+      "project": "ClientProject",
+      "sourceType": "project_doc",
+      "root": "__PROJECT_DOC_ROOT__",
+      "include": ["**/*.md"],
+      "exclude": ["**/node_modules/**", "**/build/**", "**/.git/**", "**/dist/**"],
+      "priority": 1
+    }
+  ]
+}
