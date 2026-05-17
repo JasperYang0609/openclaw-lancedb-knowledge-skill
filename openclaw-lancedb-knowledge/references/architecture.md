@@ -1,5 +1,15 @@
 # OpenClaw LanceDB Architecture
 
+## Universal LLM readability
+
+This skill may be consumed by OpenClaw, Claude Opus, Codex, Cursor, or another client-side agent. Keep all reusable instructions model-agnostic:
+
+- Explain intent before commands.
+- Use stable file names and obvious configuration keys.
+- Avoid relying on hidden memory, private channel conventions, or model-specific tool names.
+- When an action depends on OpenClaw, label it as such and include the underlying shell/project command when safe.
+- Require source citation in answers so any LLM can ground its output in retrieved paths.
+
 ## Purpose
 
 Create a local semantic retrieval layer for OpenClaw so old decisions, project progress, backup summaries, and handoff notes can be found after session reset or context loss.

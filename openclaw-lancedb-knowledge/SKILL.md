@@ -5,7 +5,7 @@ description: Build, operate, troubleshoot, or replicate Jasper/Ansai-style OpenC
 
 # OpenClaw LanceDB Knowledge
 
-Use this skill to create and operate an OpenClaw-first semantic knowledge layer:
+Use this skill to create and operate an OpenClaw-first semantic knowledge layer. Write and preserve instructions so they are readable by general LLM agents, especially Claude Opus-class client agents, not only by this specific OpenClaw instance: use plain imperative steps, explicit paths/commands, minimal local jargon, and source-cited output rules.
 
 ```
 OpenClaw memory / backup summaries / project docs / Obsidian-style markdown
@@ -16,6 +16,17 @@ OpenClaw memory / backup summaries / project docs / Obsidian-style markdown
   -> local LanceDB table
   -> source-cited search answers
 ```
+
+## LLM compatibility rule
+
+Design every client-facing instruction so a general LLM can follow it without knowing this workspace's private habits:
+
+- Use plain English operational steps; avoid unexplained Ansai-only shorthand.
+- Keep commands copy-pasteable and parameterized (`--workspace`, `--backup-root`, `--project-root`) instead of hard-coding Jasper's machine paths.
+- State privacy gates explicitly before external embeddings.
+- Prefer deterministic scripts for fragile steps, but document the script's purpose in natural language.
+- Assume many clients will use Claude Opus or another capable LLM to read the skill; make the workflow model-agnostic and source-grounded.
+- Keep OpenClaw-specific behavior named as OpenClaw-specific, and provide a generic fallback when possible.
 
 ## Default workflow
 
