@@ -24,3 +24,9 @@ https://github.com/JasperYang0609/openclaw-lancedb-knowledge-skill/raw/main/dist
 - Secret redaction before embedding/indexing
 - Incremental indexing and cron wrapper
 - Source-map examples for memory, backup summaries, project docs, and Obsidian-style vaults
+
+## Maintainer use of Codex
+
+This project is maintained as part of the OpenClaw ecosystem. We plan to use Codex to review pull requests, improve LanceDB/OpenClaw compatibility, generate tests for indexing and retrieval behavior, and keep installation and source-map documentation current.
+
+API-assisted maintenance should focus on reusable open-source workflows: issue triage, regression checks, documentation updates, and release notes. Codex should not be used to index or inspect private customer memories, transcripts, backups, or project documents.
