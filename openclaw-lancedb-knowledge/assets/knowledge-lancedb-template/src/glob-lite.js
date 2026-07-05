@@ -45,7 +45,7 @@ export function walkFiles(root) {
     for (const ent of entries) {
       const p = path.join(cur, ent.name);
       if (ent.isDirectory()) {
-        if (['node_modules', '.git', 'build', 'dist', '.dart_tool', '.next'].includes(ent.name)) continue;
+        if (['node_modules', '.git', 'build', 'dist', '.dart_tool', '.next', 'data', 'output', '.lancedb'].includes(ent.name)) continue;
         stack.push(p);
       } else if (ent.isFile()) {
         out.push(p);

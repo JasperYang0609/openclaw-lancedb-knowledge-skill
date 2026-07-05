@@ -25,8 +25,18 @@ export function resolveGoogleApiKey() {
   throw new Error('Google API key not found. Set GOOGLE_API_KEY/GEMINI_API_KEY or configure OpenClaw Google provider.');
 }
 
-function cacheKey({ text, model, dimensions, taskType }) {
+export function cacheKey({ text, model, dimensions, taskType }) {
   return sha256(`${model}\n${dimensions}\n${taskType}\n${text}`);
+}
+
+// L2 normalize before writing to the table and before querying so cosine/L2 distances stay
+// comparable. Zero or non-finite vectors are returned unchanged.
+export function l2Normalize(vector) {
+  let sum = 0;
+  for (const v of vector) sum += v * v;
+  const norm = Math.sqrt(sum);
+  if (!Number.isFinite(norm) || norm === 0) return vector.slice();
+  return vector.map((v) => v / norm);
 }
 
 export class EmbeddingCache {
@@ -49,6 +59,40 @@ export class EmbeddingCache {
     this.map.set(key, vector);
     fs.appendFileSync(this.cachePath, JSON.stringify({ key, vector, ...meta, cachedAt: new Date().toISOString() }) + '\n');
   }
+}
+
+// Keep only cache rows whose key is in keepKeys and rewrite the JSONL (last row wins per key);
+// the cache stores raw API vectors. keepQueryMeta (optional, { taskType, model, dimensions }):
+// query vectors (written by embedOne) cannot have their keys recomputed from chunks, so query
+// rows matching the current settings are kept by row metadata; repeated queries then skip the
+// API after compaction.
+export function compactEmbeddingCache({ cachePath, keepKeys, keepQueryMeta = null }) {
+  const resolved = path.resolve(cachePath || './data/embedding-cache/google-gemini.jsonl');
+  if (!fs.existsSync(resolved)) return { ok: true, cachePath: resolved, before: 0, kept: 0, removed: 0 };
+  const bytesBefore = fs.statSync(resolved).size;
+  const lines = fs.readFileSync(resolved, 'utf8').split(/\r?\n/).filter(Boolean);
+  const kept = new Map(); // key -> original JSONL line (last row wins for duplicate keys)
+  let parsed = 0;
+  let keptQueryRows = 0;
+  for (const line of lines) {
+    let row;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!row.key || !Array.isArray(row.vector)) continue;
+    parsed += 1;
+    if (keepKeys.has(row.key)) { kept.set(row.key, line); continue; }
+    if (keepQueryMeta
+      && row.taskType === keepQueryMeta.taskType
+      && row.model === keepQueryMeta.model
+      && row.dimensions === keepQueryMeta.dimensions) {
+      if (!kept.has(row.key)) keptQueryRows += 1;
+      kept.set(row.key, line);
+    }
+  }
+  const tmpPath = resolved + '.compact.tmp';
+  fs.writeFileSync(tmpPath, [...kept.values()].map((l) => l + '\n').join(''));
+  fs.renameSync(tmpPath, resolved);
+  const bytesAfter = fs.statSync(resolved).size;
+  return { ok: true, cachePath: resolved, before: parsed, kept: kept.size, keptQueryRows, removed: parsed - kept.size, bytesBefore, bytesAfter };
 }
 
 async function postJsonWithRetry(url, body, { maxRetries = 6 } = {}) {
@@ -96,13 +140,13 @@ export class GoogleGeminiEmbedder {
   async embedOne(text, taskType = this.queryTaskType) {
     const key = cacheKey({ text, model: this.model, dimensions: this.dimensions, taskType });
     const cached = this.cache.get(key);
-    if (cached) return cached;
+    if (cached) return l2Normalize(cached);
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:embedContent?key=${encodeURIComponent(this.apiKey)}`;
     const data = await postJsonWithRetry(url, this.makeRequest(text, taskType));
     const vector = data.embedding?.values;
     if (!Array.isArray(vector) || vector.length !== this.dimensions) throw new Error(`Unexpected embedding dimension: ${vector?.length}`);
     this.cache.append(key, vector, { model: this.model, dimensions: this.dimensions, taskType });
-    return vector;
+    return l2Normalize(vector);
   }
 
   async embedDocuments(texts, onProgress = () => {}) {
@@ -112,7 +156,7 @@ export class GoogleGeminiEmbedder {
     for (let i = 0; i < texts.length; i++) {
       const key = cacheKey({ text: texts[i], model: this.model, dimensions: this.dimensions, taskType });
       const cached = this.cache.get(key);
-      if (cached) out[i] = cached;
+      if (cached) out[i] = l2Normalize(cached);
       else missing.push({ i, key, text: texts[i] });
     }
     onProgress({ phase: 'cache', total: texts.length, cached: texts.length - missing.length, missing: missing.length });
@@ -128,7 +172,7 @@ export class GoogleGeminiEmbedder {
         const vector = emb.values;
         if (!Array.isArray(vector) || vector.length !== this.dimensions) throw new Error(`Unexpected embedding dimension in batch: ${vector?.length}`);
         const item = batch[j];
-        out[item.i] = vector;
+        out[item.i] = l2Normalize(vector);
         this.cache.append(item.key, vector, { model: this.model, dimensions: this.dimensions, taskType });
       });
       done += batch.length;

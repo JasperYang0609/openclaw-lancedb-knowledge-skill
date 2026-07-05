@@ -42,24 +42,31 @@ function inferChannel(absPath) {
   return rest[0] || '';
 }
 
-function inferProject(source, relPath, absPath) {
-  if (source.project && source.project !== 'DiscordBackups' && source.project !== 'GlobalMemory') return source.project;
-  const s = (relPath + ' ' + absPath).toLowerCase();
+function inferProject(source, relPath) {
+  // Respect source.project when set (the source map is authoritative); heuristics are only a
+  // fallback for sources without a project label.
+  if (source.project) return source.project;
+  // Heuristics match relPath only; absPath almost always contains strings like .openclaw or
+  // backup and would misclassify everything as OpenClawOps.
+  const s = relPath.toLowerCase();
   if (/vaso|documentcenter|documentdetail|flutterflow/.test(s)) return 'VASO';
   if (/beango|咖啡|cafe/.test(s)) return 'BeanGo';
   if (/新人|trainee/.test(s)) return 'TraineeApp';
   if (/股票|stock|anan-stock|安安股票/.test(s)) return 'StockMonitor';
-  if (/ig|instagram/.test(s)) return 'IGResearch';
-  if (/openclaw|backup|cron|memory|heartbeat/.test(s)) return 'OpenClawOps';
+  // Word boundary keeps embedded "ig" in words like config / insight from matching IGResearch.
+  if (/\big\b|instagram/.test(s)) return 'IGResearch';
+  // Check AnsaiBrand before the OpenClawOps fallback so brand files whose names contain words
+  // like backup can still match.
   if (/品牌|brand|ansai/.test(s)) return 'AnsaiBrand';
-  return source.project || 'General';
+  if (/openclaw|backup|cron|memory|heartbeat/.test(s)) return 'OpenClawOps';
+  return 'General';
 }
 
 export function chunkMarkdown({ source, absPath, relPath, content }) {
   const title = inferTitle(relPath, content);
   const date = inferDate(relPath, content);
   const channel = inferChannel(absPath);
-  const project = inferProject(source, relPath, absPath);
+  const project = inferProject(source, relPath);
   const sections = [];
   const lines = content.split(/\r?\n/);
   let currentHeading = title;

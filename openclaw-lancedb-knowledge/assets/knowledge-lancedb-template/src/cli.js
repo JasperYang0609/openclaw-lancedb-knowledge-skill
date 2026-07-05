@@ -4,7 +4,7 @@ import path from 'node:path';
 import * as lancedb from '@lancedb/lancedb';
 import { loadConfig, buildChunks } from './sources.js';
 import { embedLocalHash } from './embed-local.js';
-import { getEmbedder } from './embed-google.js';
+import { getEmbedder, cacheKey as embeddingCacheKey, compactEmbeddingCache } from './embed-google.js';
 
 function arg(name, fallback = undefined) {
   const idx = process.argv.indexOf(`--${name}`);
@@ -21,7 +21,7 @@ function loadIndexState() {
   if (!fs.existsSync(p)) return null;
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
-function writeIndexState(config, built, extra = {}) {
+function writeIndexState(config, built, extra = {}, { merge = false } = {}) {
   ensureDir(path.dirname(statePath()));
   const files = {};
   for (const c of built.chunks) {
@@ -43,15 +43,24 @@ function writeIndexState(config, built, extra = {}) {
     files[c.source_path].chunk_ids.push(c.id);
     files[c.source_path].chunks += 1;
   }
+  // Merge mode (partial index): read the previous state and only replace the paths touched by
+  // this run instead of rewriting the whole file map.
+  let mergedFiles = files;
+  if (merge) {
+    const prev = loadIndexState();
+    if (prev?.files) mergedFiles = { ...prev.files, ...files };
+  }
   const state = {
     version: 1,
     updatedAt: new Date().toISOString(),
     tableName: config.tableName || 'knowledge_chunks',
     dbPath: path.resolve(config.dbPath || './data/lancedb'),
     embedding: config.embedding,
-    docs: built.docs.length,
-    chunks: built.chunks.length,
-    files,
+    // Always derive docs from the state file map: with a partial index + overwrite, built.docs
+    // counts the whole corpus and would contradict the filtered files/chunks in the same state.
+    docs: Object.keys(mergedFiles).length,
+    chunks: merge ? Object.values(mergedFiles).reduce((a, f) => a + (f.chunks || 0), 0) : built.chunks.length,
+    files: mergedFiles,
     ...extra
   };
   fs.writeFileSync(statePath(), JSON.stringify(state, null, 2));
@@ -74,6 +83,12 @@ async function deleteSourcePaths(table, paths) {
     if (pred) await table.delete(pred);
   }
 }
+// Single source of truth for embedding input text; compact-cache derives cache keys with the
+// same function, so the two must stay in sync.
+function chunkEmbedText(c) {
+  return `${c.project}\n${c.title}\n${c.heading}\n${c.chunk_text}`;
+}
+
 async function rowsForChunks(config, chunks) {
   const dims = config.embedding?.dimensions || 384;
   let vectors;
@@ -81,10 +96,7 @@ async function rowsForChunks(config, chunks) {
   if (embeddingProvider === 'google-gemini') {
     const embedder = getEmbedder(config.embedding);
     vectors = await embedder.embedDocuments(
-      chunks.map((c) => `${c.project}
-${c.title}
-${c.heading}
-${c.chunk_text}`),
+      chunks.map((c) => chunkEmbedText(c)),
       (p) => {
         if (p.phase === 'cache') console.error(`[embedding] cache hit ${p.cached}/${p.total}; remote ${p.missing}`);
         if (p.phase === 'remote') console.error(`[embedding] remote embedded ${p.done}/${p.total} (+${p.batchSize})`);
@@ -92,10 +104,7 @@ ${c.chunk_text}`),
     );
   } else {
     embeddingProvider = 'local-hash-v1';
-    vectors = chunks.map((c) => embedLocalHash(`${c.project}
-${c.title}
-${c.heading}
-${c.chunk_text}`, dims));
+    vectors = chunks.map((c) => embedLocalHash(chunkEmbedText(c), dims));
   }
   return chunks.map((c, i) => ({
     ...c,
@@ -149,10 +158,16 @@ async function commandIndex(config) {
   if (mode === 'overwrite') {
     await db.createTable(tableName, rows, { mode: 'overwrite' });
   } else {
-    let table;
-    try { table = await db.openTable(tableName); }
-    catch { table = await db.createTable(tableName, rows.slice(0, 1), { mode: 'overwrite' }); rows.shift(); }
-    if (rows.length) await table.add(rows);
+    let table = null;
+    try { table = await db.openTable(tableName); } catch {}
+    if (!table) {
+      await db.createTable(tableName, rows, { mode: 'overwrite' });
+    } else {
+      // Delete existing rows for the same source_path before appending so re-running the same
+      // batch of files does not accumulate duplicate chunks.
+      await deleteSourcePaths(table, new Set(rows.map((r) => r.source_path)));
+      await table.add(rows);
+    }
   }
 
   ensureDir('reports');
@@ -172,7 +187,11 @@ async function commandIndex(config) {
   };
   fs.writeFileSync('reports/index-manifest.latest.json', JSON.stringify(manifest, null, 2));
   fs.writeFileSync(`reports/index-manifest.${nowStamp()}.json`, JSON.stringify(manifest, null, 2));
-  writeIndexState(config, { ...built, chunks }, { lastIndexMode: mode });
+  // A partial index (--project/--limit) with append merges the previous state (only the paths
+  // touched this run); overwrite rebuilds the whole table, so the state is rewritten in full to
+  // mirror the table contents.
+  const partial = Boolean(projectFilter) || limit > 0;
+  writeIndexState(config, { ...built, chunks }, { lastIndexMode: mode }, { merge: partial && mode === 'append' });
   console.log(JSON.stringify(manifest, null, 2));
 }
 
@@ -204,12 +223,20 @@ async function commandIncremental(config) {
   const currentPaths = new Set(currentByPath.keys());
   const previousPaths = new Set(Object.keys(state.files));
   const removedPaths = [...previousPaths].filter((p) => !currentPaths.has(p));
+  // Compare only the four keys that change vector semantics; tuning throttleMs/batchSize/cachePath
+  // and similar settings must not trigger a full re-embed.
+  const embedFingerprint = (e = {}) => JSON.stringify({
+    provider: e.provider ?? null,
+    model: e.model ?? null,
+    dimensions: e.dimensions ?? null,
+    documentTaskType: e.documentTaskType ?? null
+  });
+  const prevEmbedding = embedFingerprint(state.embedding || {});
+  const currentEmbedding = embedFingerprint(config.embedding || {});
   const changedPaths = [];
   for (const [p, chunks] of currentByPath) {
     const prev = state.files[p];
     const sha = chunks[0]?.file_sha256;
-    const prevEmbedding = JSON.stringify(state.embedding || {});
-    const currentEmbedding = JSON.stringify(config.embedding || {});
     if (!prev || prev.file_sha256 !== sha || prevEmbedding !== currentEmbedding) changedPaths.push(p);
   }
 
@@ -247,6 +274,29 @@ async function commandIncremental(config) {
   fs.writeFileSync('reports/incremental-manifest.latest.json', JSON.stringify(report, null, 2));
   fs.writeFileSync(`reports/incremental-manifest.${nowStamp()}.json`, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
+}
+
+async function commandCompactCache(config) {
+  const emb = config.embedding || {};
+  if (emb.provider !== 'google-gemini') {
+    console.log(JSON.stringify({ ok: true, skipped: true, reason: `no remote embedding cache for provider ${emb.provider || 'local-hash-v1'}` }));
+    return;
+  }
+  // Recompute cache keys from the chunks current sources would produce (the content the index
+  // still references), keep only those keys, and rewrite the JSONL; no embedding API calls.
+  const built = buildChunks(config);
+  const model = emb.model || 'gemini-embedding-001';
+  const dimensions = emb.dimensions || 768;
+  const taskType = emb.documentTaskType || 'RETRIEVAL_DOCUMENT';
+  const queryTaskType = emb.queryTaskType || 'RETRIEVAL_QUERY';
+  const keepKeys = new Set(built.chunks.map((c) => embeddingCacheKey({ text: chunkEmbedText(c), model, dimensions, taskType })));
+  // Query vectors (embedOne writes them to the same JSONL under queryTaskType) cannot be
+  // recomputed from chunks, so they are kept by row metadata; repeated queries then avoid extra
+  // API calls after compaction. Disabled when the task types match to avoid keeping stale
+  // document rows.
+  const keepQueryMeta = queryTaskType !== taskType ? { taskType: queryTaskType, model, dimensions } : null;
+  const result = compactEmbeddingCache({ cachePath: emb.cachePath, keepKeys, keepQueryMeta });
+  console.log(JSON.stringify({ ...result, chunksAvailable: built.chunks.length, keepKeys: keepKeys.size }, null, 2));
 }
 
 async function commandStatus(config) {
@@ -360,7 +410,8 @@ async function main() {
   if (cmd === 'sync-state') return commandSyncState(config);
   if (cmd === 'status') return commandStatus(config);
   if (cmd === 'search') return commandSearch(config);
-  console.log(`knowledge-lancedb commands:\n  scan\n  index [--limit N] [--project NAME] [--append]\n  search "query" [--project NAME] [--limit N]\n  status`);
+  if (cmd === 'compact-cache') return commandCompactCache(config);
+  console.log(`knowledge-lancedb commands:\n  scan\n  index [--limit N] [--project NAME] [--append]\n  search "query" [--project NAME] [--limit N]\n  status\n  compact-cache`);
 }
 
 main().catch((err) => {
