@@ -2,6 +2,12 @@
 
 Use `config/source-map.json` to keep indexing explicit and client-safe.
 
+## Project labels and overlapping sources
+
+- A source's `project` value is authoritative: every file the source claims gets that label. Filename heuristics run only for sources without a `project`, and they match the file's relative path only, so prefer setting an explicit `project` on every source.
+- When two sources overlap (same or nested roots), the source whose include pattern is most specific claims the file: an exact relative path beats a single-level wildcard (`*.md`), which beats a recursive wildcard (`**/*.md`). Ties go to the source listed earlier in the config. Each file is indexed exactly once.
+- Use this to carve special files out of a broad source: list the broad `**/*.md` source, then add a narrower source with explicit include paths and a different `project`/`sourceType` for the files that need distinct attribution.
+
 ## Minimum OpenClaw setup
 
 ```json
@@ -75,6 +81,15 @@ Do not index whole code repositories by default. Start with README, schema, arch
   "priority": 1
 }
 ```
+
+## Division of responsibilities with built-in OpenClaw memory search
+
+If the platform already ships a built-in memory/vector search over agent memory files, avoid competing indexes over the same content:
+
+- Let the built-in memory search own short-term session recall over the agent's own memory files; keep this knowledge base focused on curated summaries, project docs, handoff files, and vault content with explicit project labels and source-cited answers.
+- Do not double-index the same raw files in both systems by default; if the built-in index already covers a root well, exclude it here or index only its summary layer.
+- Route "what happened recently in this session/agent" questions to the built-in search, and "historical/cross-project/client documentation" questions to this knowledge base.
+- If the built-in index is broken or paused, repair it (see the skill's memory index health section) instead of silently widening this knowledge base to compensate.
 
 ## Quality checklist
 

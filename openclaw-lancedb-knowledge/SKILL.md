@@ -90,6 +90,29 @@ If retrieval is weak, say so and run a narrower search with project/channel/date
 - Changing embedding model or dimensions requires full reindex.
 - Do not index raw Discord/chat backups first unless summaries are insufficient; raw data is noisy and privacy-heavy.
 
+## Memory index health and provider migration
+
+Use this section when OpenClaw memory/vector search reports `index metadata is missing`, `vector search paused`, `Dirty: yes`, `Index identity: missing`, or `0 chunks` after files exist.
+
+Diagnosis:
+1. Run the platform memory index status command for the affected agent, e.g. `openclaw memory status --index --agent main` when available.
+2. Identify the configured embedding provider/model and dimensions.
+3. Check whether the index was created with a different provider/model or has missing metadata.
+4. Treat provider/model/dimension changes as a migration requiring full reindex.
+
+Repair:
+1. Confirm privacy before using external embeddings; private chunks may leave the machine.
+2. Fix the desired embedding provider/model in config or project docs.
+3. Force rebuild the index, e.g. `openclaw memory index --force --agent main` when available.
+4. Verify status shows indexed files/chunks and no paused vector search.
+5. Run sample searches for: people/permissions, project decisions, and recent tasks.
+
+Prevention:
+- Do not silently switch embedding provider/model on client deployments.
+- Record provider/model choice in the client handoff.
+- Add daily or weekly index status checks for client knowledge bases.
+- If status is broken, prefer repair/reindex before answering memory-dependent questions.
+
 ## Bundled resources
 
 - `scripts/bootstrap_openclaw_lancedb.py` — creates a portable `knowledge-lancedb` project from the bundled template.
