@@ -13,7 +13,7 @@ export const SECRET_PATTERNS = [
   { name: 'jwt', re: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
   { name: 'bearer', re: /Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi },
   { name: 'key_value_secret', re: /\b(?:service\s*role\s*key|api\s*key|secret|token|password)\b\s*[:=]\s*[^\s`'"，,;]+/gi },
-  { name: 'cjk_key_value_secret', re: /(?:密碼|金鑰|憑證)\s*[::]\s*\S+/g }
+  { name: 'cjk_key_value_secret', re: /(?:密碼|金鑰|憑證)\s*[:：]\s*\S+/g }
 ];
 
 export function redactSecrets(text) {

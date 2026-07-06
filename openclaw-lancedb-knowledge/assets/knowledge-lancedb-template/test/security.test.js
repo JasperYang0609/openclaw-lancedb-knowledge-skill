@@ -27,7 +27,10 @@ test('redacts extended provider tokens and credentials', () => {
     'https://user:' + 'supersecret@example.com/path',
     '-----BEGIN PRIVATE KEY-----\nMIIfake\n-----END PRIVATE KEY-----',
     '密碼:' + '超級機密123',
-    '金鑰: ' + 'abc-def-123'
+    '金鑰: ' + 'abc-def-123',
+    '密碼：' + '全形冒號機密456',
+    '金鑰：' + 'abc-def-789',
+    '憑證： ' + 'cert-secret-000'
   ];
   for (const sample of samples) {
     const out = redactSecrets(`context ${sample} tail`);
