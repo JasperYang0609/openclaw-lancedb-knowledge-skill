@@ -45,7 +45,7 @@ From the installed skill folder:
 python3 scripts/bootstrap_openclaw_lancedb.py \
   --target ~/.openclaw/workspace/knowledge-lancedb \
   --workspace ~/.openclaw/workspace \
-  --backup-root "$HOME/Desktop/安賽小助手備份/頻道紀錄" \
+  --backup-root "$HOME/Desktop/<伺服器名稱>備份/頻道紀錄" \
   --project-root "$HOME/Desktop/Client_Project" \
   --project-name ClientProject \
   --npm-install
