@@ -12,7 +12,8 @@
     "test": "node --test",
     "incremental": "node src/cli.js incremental",
     "sync-state": "node src/cli.js sync-state",
-    "compact-cache": "node src/cli.js compact-cache"
+    "compact-cache": "node src/cli.js compact-cache",
+    "postrun:check": "node scripts/post_run_check.mjs"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.2"

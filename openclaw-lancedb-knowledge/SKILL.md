@@ -69,6 +69,7 @@ npm run index
 npm run status
 npm run search -- "VASO 文件中心做到哪" -- --project VASO --limit 5
 npm run incremental
+npm run postrun:check
 ```
 
 ## Answer pattern after retrieval
@@ -112,6 +113,16 @@ Prevention:
 - Record provider/model choice in the client handoff.
 - Add daily or weekly index status checks for client knowledge bases.
 - If status is broken, prefer repair/reindex before answering memory-dependent questions.
+
+## Post-run self-check
+
+After changing the template, indexing scripts, source-map defaults, or redaction logic, run this inside the generated `knowledge-lancedb/` project:
+
+```bash
+npm run postrun:check
+```
+
+The check validates the template command surface, source-map safety defaults, incremental wrapper locking/report rotation, and the bundled test suite. It is intentionally local-only and does not index private workspace content.
 
 ## Bundled resources
 

@@ -17,7 +17,7 @@
       "sourceType": "memory",
       "root": "__OPENCLAW_WORKSPACE__/memory",
       "include": ["**/*.md"],
-      "exclude": ["**/*.bak*", "**/*secret*", "**/*token*"],
+      "exclude": ["**/*.bak*", "**/*secret*", "**/*token*", "**/.env*"],
       "priority": 0
     },
     {
@@ -26,7 +26,7 @@
       "sourceType": "backup_summary",
       "root": "__DISCORD_BACKUP_ROOT__",
       "include": ["**/summary/**/*.md", "**/*摘要*.md", "**/*summary*.md"],
-      "exclude": ["**/raw/**", "**/legacy/**", "**/legacy_docs/**"],
+      "exclude": ["**/raw/**", "**/legacy/**", "**/legacy_docs/**", "**/.env*", "**/*secret*", "**/*token*"],
       "priority": 0
     },
     {
@@ -35,7 +35,7 @@
       "sourceType": "project_doc",
       "root": "__PROJECT_DOC_ROOT__",
       "include": ["**/*.md"],
-      "exclude": ["**/node_modules/**", "**/build/**", "**/.git/**", "**/dist/**"],
+      "exclude": ["**/node_modules/**", "**/build/**", "**/.git/**", "**/dist/**", "**/.env*", "**/*secret*", "**/*token*"],
       "priority": 1
     }
   ]
