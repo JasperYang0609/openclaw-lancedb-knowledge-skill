@@ -94,7 +94,7 @@ npm run enrich:prepare -- --output data/enrichment/input.jsonl
 npm run enrich:validate -- --input data/enrichment/model-output.jsonl
 ```
 
-Only after validation, set `enrichment.enabled=true` and point `enrichment.inputPath` at the validated file. Rows below `minConfidence` are stored as `low_confidence` with `ai_needs_review=true`. Missing or invalid output falls back to deterministic metadata, so an AI failure cannot remove the core index.
+Only after validation, set `enrichment.enabled=true` and point `enrichment.inputPath` at the validated file. The validator requires integer `schema_version: 1`. Rows below `minConfidence` are stored as `low_confidence` with `ai_needs_review=true` and are excluded from reranking. Missing or invalid output falls back to deterministic metadata, so an AI failure cannot remove the core index.
 
 ## Retrieval benchmark gate
 

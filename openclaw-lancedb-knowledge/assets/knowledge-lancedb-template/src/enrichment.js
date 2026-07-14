@@ -38,6 +38,9 @@ export function validateEnrichmentRecord(record, { minConfidence = 0.75 } = {}) 
   if (forbidden.length) return { ok: false, error: `authoritative fields are forbidden: ${forbidden.join(', ')}` };
   const unknown = Object.keys(record).filter((key) => !ALLOWED_FIELDS.has(key));
   if (unknown.length) return { ok: false, error: `unknown fields: ${unknown.join(', ')}` };
+  if (!Number.isInteger(record.schema_version) || record.schema_version !== 1) {
+    return { ok: false, error: 'schema_version must be the supported integer value 1' };
+  }
   const id = cleanText(record.id, 128);
   if (!id) return { ok: false, error: 'id is required' };
   const docType = cleanText(record.doc_type, 40).toLowerCase();

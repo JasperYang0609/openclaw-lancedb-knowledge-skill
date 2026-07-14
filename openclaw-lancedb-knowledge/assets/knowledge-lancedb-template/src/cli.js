@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import * as lancedb from '@lancedb/lancedb';
 import { loadConfig, buildChunks } from './sources.js';
 import { embedLocalHash } from './embed-local.js';
@@ -237,9 +238,65 @@ async function commandIndex(config) {
 }
 
 
+async function validateSyncStateTable(config, table, built) {
+  const schema = await table.schema();
+  const fields = new Map(schema.fields.map((field) => [field.name, field]));
+  const required = [
+    'id', 'content_sha256', 'deterministic_doc_type', 'deterministic_tags_json',
+    'deterministic_importance', 'deterministic_metadata_version', 'ai_enrichment_status',
+    'ai_enrichment_schema_version', 'embedding_provider', 'embedding_model',
+    'embedding_dimensions', 'vector'
+  ];
+  const missing = required.filter((name) => !fields.has(name));
+  if (missing.length) throw new Error(`[sync-state] table is not schema v2 (missing: ${missing.join(', ')}); run a full index rebuild`);
+  const vectorDimensions = Number(fields.get('vector')?.type?.listSize);
+  if (vectorDimensions !== Number(config.embedding?.dimensions)) {
+    throw new Error(`[sync-state] table vector dimensions ${vectorDimensions || 'unknown'} do not match configured ${config.embedding?.dimensions}; run a full index rebuild`);
+  }
+
+  const enrichment = loadEnrichmentCache(config.enrichment || {});
+  const expected = new Map(built.chunks.map((chunk) => {
+    const row = applyAuxiliaryEnrichment(chunk, enrichment.records.get(chunk.id), { enabled: enrichment.enabled });
+    return [chunk.id, row];
+  }));
+  const selected = [
+    'id', 'content_sha256', 'deterministic_doc_type', 'deterministic_tags_json',
+    'deterministic_importance', 'deterministic_metadata_version', 'ai_doc_type',
+    'ai_tags_json', 'ai_importance', 'ai_summary', 'ai_decisions_json', 'ai_risks_json',
+    'ai_action_items_json', 'ai_confidence', 'ai_needs_review', 'ai_enrichment_status',
+    'ai_enrichment_model', 'ai_enrichment_schema_version', 'embedding_provider',
+    'embedding_model', 'embedding_dimensions'
+  ];
+  const rows = await table.query().select(selected).toArray();
+  if (rows.length !== expected.size) {
+    throw new Error(`[sync-state] table rows ${rows.length} do not match current chunks ${expected.size}; run a full index rebuild`);
+  }
+  const exactFields = selected.filter((name) => !['id', 'embedding_provider', 'embedding_model', 'embedding_dimensions'].includes(name));
+  for (const row of rows) {
+    const wanted = expected.get(row.id);
+    if (!wanted) throw new Error(`[sync-state] table contains an unexpected chunk id; run a full index rebuild`);
+    for (const field of exactFields) {
+      if (row[field] !== wanted[field]) throw new Error(`[sync-state] table field ${field} does not match current sources/enrichment; run a full index rebuild`);
+    }
+    if (row.embedding_provider !== config.embedding?.provider ||
+        row.embedding_model !== config.embedding?.model ||
+        Number(row.embedding_dimensions) !== Number(config.embedding?.dimensions)) {
+      throw new Error('[sync-state] table embedding metadata does not match configuration; run a full index rebuild');
+    }
+    expected.delete(row.id);
+  }
+  if (expected.size) throw new Error('[sync-state] table is missing current chunks; run a full index rebuild');
+}
+
 async function commandSyncState(config) {
   const built = buildChunks(config);
-  const state = writeIndexState(config, built, { syncedFromCurrentSourcesOnly: true });
+  const db = await openDb(config);
+  const tableName = config.tableName || 'knowledge_chunks';
+  let table;
+  try { table = await db.openTable(tableName); }
+  catch { throw new Error(`[sync-state] table ${tableName} is missing; run a full index rebuild`); }
+  await validateSyncStateTable(config, table, built);
+  const state = writeIndexState(config, built, { syncedFromValidatedSchemaV2Table: true });
   console.log(JSON.stringify({ ok: true, statePath: statePath(), docs: state.docs, chunks: state.chunks, files: Object.keys(state.files).length }, null, 2));
 }
 
@@ -394,11 +451,12 @@ function sourceProgressBoost(row) {
   return b;
 }
 
-function rerankRows(rows, query) {
+export function rerankRows(rows, query) {
   const qTerms = rankTerms(query);
   const progress = isProgressQuery(query);
   return rows.map((r) => {
-    const hay = `${r.project} ${r.title} ${r.heading} ${r.rel_path} ${r.deterministic_tags_json || ''} ${r.ai_tags_json || ''} ${r.ai_summary || ''} ${r.chunk_text}`.toLowerCase();
+    const trustedAiText = r.ai_enrichment_status === 'valid' ? `${r.ai_tags_json || ''} ${r.ai_summary || ''}` : '';
+    const hay = `${r.project} ${r.title} ${r.heading} ${r.rel_path} ${r.deterministic_tags_json || ''} ${trustedAiText} ${r.chunk_text}`.toLowerCase();
     const overlap = qTerms.length ? qTerms.filter((t) => hay.includes(t.toLowerCase())).length / qTerms.length : 0;
     const vector = typeof r._distance === 'number' ? 1 / (1 + r._distance) : 0;
     const recency = progress ? dateScore(r.date) : 0;
@@ -531,7 +589,9 @@ async function main() {
   console.log(`knowledge-lancedb commands:\n  scan\n  index [--limit N] [--project NAME] [--append]\n  incremental\n  search "query" [--project NAME] [--limit N]\n  prepare-enrichment [--output FILE] [--limit N]\n  validate-enrichment --input FILE [--output FILE]\n  benchmark --file FILE [--release-gate]\n  profile\n  status\n  compact-cache`);
 }
 
-main().catch((err) => {
-  console.error(err.stack || String(err));
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(err.stack || String(err));
+    process.exit(1);
+  });
+}

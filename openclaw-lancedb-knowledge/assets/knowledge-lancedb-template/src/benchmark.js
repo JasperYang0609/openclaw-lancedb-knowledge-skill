@@ -1,5 +1,25 @@
 function norm(value) { return String(value ?? '').toLowerCase(); }
 
+const EXPECTATION_FIELDS = new Set([
+  'project',
+  'sourceType',
+  'channel',
+  'sourcePathIncludes',
+  'titleIncludes',
+  'headingIncludes',
+  'textIncludes'
+]);
+
+function validateExpected(expected) {
+  if (!expected || typeof expected !== 'object' || Array.isArray(expected)) throw new Error('Benchmark expected must be an object');
+  const keys = Object.keys(expected);
+  if (!keys.length) throw new Error('Benchmark expected needs at least one non-empty expectation');
+  for (const key of keys) {
+    if (!EXPECTATION_FIELDS.has(key)) throw new Error(`Unknown expectation field: ${key}`);
+    if (typeof expected[key] !== 'string' || !expected[key].trim()) throw new Error(`Benchmark ${key} must be a non-empty expectation`);
+  }
+}
+
 function rowMatches(row, expected = {}) {
   if (expected.project && norm(row.project) !== norm(expected.project)) return false;
   if (expected.sourceType && norm(row.source_type) !== norm(expected.sourceType)) return false;
@@ -19,6 +39,7 @@ export function evaluateBenchmark(cases, resultsById, { k = 5, releaseGate = fal
   let reciprocalRank = 0;
   for (const item of cases) {
     if (!item?.id || !item?.query || !item?.expected) throw new Error('Each benchmark case needs id, query, and expected');
+    validateExpected(item.expected);
     const rows = (resultsById.get(item.id) || []).slice(0, k);
     const idx = rows.findIndex((row) => rowMatches(row, item.expected));
     const rank = idx >= 0 ? idx + 1 : null;

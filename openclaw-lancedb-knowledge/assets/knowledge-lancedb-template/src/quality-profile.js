@@ -21,7 +21,7 @@ export function resolveEmbeddingProfile(embedding = {}) {
   let cachePath = embedding.cachePath;
   if (provider === 'google-gemini' && cachePath) {
     const encodedDimension = cachePath.match(/[-_](\d+)\.jsonl$/i)?.[1];
-    if (encodedDimension && Number(encodedDimension) !== dimensions) cachePath = cachePathForDimensions(cachePath, dimensions);
+    if (!encodedDimension || Number(encodedDimension) !== dimensions) cachePath = cachePathForDimensions(cachePath, dimensions);
   }
   if (!cachePath && provider === 'google-gemini') cachePath = `./data/embedding-cache/${model}-${dimensions}.jsonl`;
   return { ...embedding, provider, model, profile, dimensions, ...(cachePath ? { cachePath } : {}) };

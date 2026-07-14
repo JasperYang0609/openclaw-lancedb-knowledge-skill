@@ -35,8 +35,9 @@ Create a local semantic retrieval layer for OpenClaw so old decisions, project p
 6. Optional AI output is read from a validated local JSONL cache. It is written only to `ai_*` columns, gets a derived confidence/review state, and cannot overwrite source metadata. Disabled, missing, invalid, or low-confidence enrichment leaves deterministic retrieval intact.
 7. Rows are embedded and written to LanceDB. Remote embedding vectors are L2-normalized before they are written and before queries (zero vectors are left unchanged); the JSONL embedding cache stores the raw API vectors. Append mode deletes existing rows for the same `source_path` before adding, so re-indexing a file never duplicates chunks.
 8. Incremental indexing compares `source_path + file_sha256` plus a build fingerprint for schema, embedding identity, chunking, and enrichment input. A schema or vector-dimension migration triggers a one-time full rebuild instead of adding incompatible rows.
-9. Search embeds the query, fetches vector candidates, then reranks with keyword overlap (including deterministic and validated AI auxiliary text), recency, and progress-document boosts.
-10. Benchmarking measures source-grounded Hit@K and MRR. A release-quality gate requires at least 20 reviewed cases.
+9. `sync-state` writes schema-v2 state only after validating the existing table schema, vector dimensions, embedding identity, complete chunk IDs/hashes, deterministic metadata, and enrichment fields against current sources. Legacy or mismatched tables are rejected with a full-index instruction.
+10. Search embeds the query, fetches vector candidates, then reranks with keyword overlap (including deterministic metadata and only `valid` AI auxiliary text), recency, and progress-document boosts.
+11. Benchmarking measures source-grounded Hit@K and MRR. A release-quality gate requires at least 20 reviewed cases and rejects unknown or empty expectation fields.
 
 ## Row schema
 
@@ -77,7 +78,7 @@ Use after explicit privacy approval. It supports multilingual retrieval better a
 }
 ```
 
-`balanced` is the stable default at 768 dimensions. `high-quality` uses 3072 dimensions and a separate cache path. It is an opt-in migration: back up the DB/cache, rebuild the table, and compare a reviewed benchmark before adopting it. A larger vector is not automatically better for every corpus.
+`balanced` is the stable default at 768 dimensions. `high-quality` uses 3072 dimensions and a separate cache path. Every Gemini cache path is normalized to include its vector dimension, including legacy unsuffixed custom paths. A profile change is an opt-in migration: back up the DB/cache, rebuild the table, and compare a reviewed benchmark before adopting it. A larger vector is not automatically better for every corpus.
 
 ## AI enrichment isolation
 

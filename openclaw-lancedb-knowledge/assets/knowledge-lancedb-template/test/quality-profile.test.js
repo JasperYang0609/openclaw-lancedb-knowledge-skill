@@ -32,6 +32,17 @@ test('high-quality profile retargets an existing dimensional cache instead of mi
   assert.equal(embedding.cachePath, './data/embedding-cache/google-gemini-embedding-001-3072.jsonl');
 });
 
+test('unsuffixed Gemini cache paths are dimension-scoped for safe profile isolation', () => {
+  const balanced = resolveEmbeddingProfile({
+    provider: 'google-gemini', profile: 'balanced', cachePath: './data/embedding-cache/gemini.jsonl'
+  });
+  const high = resolveEmbeddingProfile({
+    provider: 'google-gemini', profile: 'high-quality', cachePath: './data/embedding-cache/gemini.jsonl'
+  });
+  assert.equal(balanced.cachePath, './data/embedding-cache/gemini-768.jsonl');
+  assert.equal(high.cachePath, './data/embedding-cache/gemini-3072.jsonl');
+});
+
 test('unknown profiles fail closed', () => {
   assert.throws(() => resolveEmbeddingProfile({ provider: 'google-gemini', profile: 'maximum-ish' }), /Unknown embedding profile/);
 });

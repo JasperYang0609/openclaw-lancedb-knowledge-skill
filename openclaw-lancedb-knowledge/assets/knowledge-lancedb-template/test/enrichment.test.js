@@ -27,7 +27,8 @@ test('valid enrichment is normalized into auxiliary fields only', () => {
     risks: ['Beta is unverified.'],
     action_items: ['Run CI.'],
     confidence: 0.91,
-    model: 'any-model'
+    model: 'any-model',
+    schema_version: 1
   }, { minConfidence: 0.75 });
   assert.equal(result.ok, true);
   assert.equal(result.value.needs_review, false);
@@ -46,7 +47,7 @@ test('low-confidence enrichment is retained but always marked needs_review', () 
   const result = validateEnrichmentRecord({
     id: 'chunk-1', doc_type: 'risk', tags: ['risk'], importance: 3,
     summary: 'Possible risk.', decisions: [], risks: ['Unknown impact.'], action_items: [],
-    confidence: 0.4, model: 'any-model'
+    confidence: 0.4, model: 'any-model', schema_version: 1
   }, { minConfidence: 0.75 });
   assert.equal(result.ok, true);
   assert.equal(result.value.needs_review, true);
@@ -100,4 +101,19 @@ test('enabled enrichment fails closed without explicit privacy approval', () => 
     () => loadEnrichmentCache({ enabled: true, inputPath: '/tmp/not-needed.jsonl' }),
     /privacy approval/i
   );
+});
+
+test('enrichment requires exactly supported integer schema_version 1', () => {
+  const base = {
+    id: 'chunk-1', doc_type: 'decision', tags: [], importance: 3,
+    summary: 'A decision.', decisions: [], risks: [], action_items: [], confidence: 0.9
+  };
+  for (const schemaVersion of [undefined, 2, 1.5, '1']) {
+    const record = { ...base };
+    if (schemaVersion !== undefined) record.schema_version = schemaVersion;
+    const result = validateEnrichmentRecord(record);
+    assert.equal(result.ok, false, `schema_version ${String(schemaVersion)} must fail`);
+    assert.match(result.error, /schema_version/i);
+  }
+  assert.equal(validateEnrichmentRecord({ ...base, schema_version: 1 }).ok, true);
 });

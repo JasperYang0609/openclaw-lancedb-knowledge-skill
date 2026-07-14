@@ -25,6 +25,18 @@ test('benchmark reports hit rate and reciprocal rank from source-grounded expect
   assert.equal(report.cases[2].rank, null);
 });
 
+test('benchmark rejects unknown or empty expectation fields instead of false-passing', () => {
+  const results = new Map([['q1', [{ project: 'Anything', source_path: '/x.md' }]]]);
+  assert.throws(
+    () => evaluateBenchmark([{ id: 'q1', query: 'x', expected: { projet: 'VASO' } }], results),
+    /unknown expectation field/i
+  );
+  assert.throws(
+    () => evaluateBenchmark([{ id: 'q1', query: 'x', expected: { project: '' } }], results),
+    /non-empty expectation/i
+  );
+});
+
 test('benchmark requires 20 cases for a release-quality gate by default', () => {
   assert.throws(() => evaluateBenchmark([{ id: 'q1', query: 'x', expected: { project: 'X' } }], new Map(), { releaseGate: true }), /at least 20/i);
 });

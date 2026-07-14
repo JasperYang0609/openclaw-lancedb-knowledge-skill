@@ -95,4 +95,38 @@ test('CLI indexes deterministic metadata, validates optional enrichment, and pas
   assert.equal(report.passed, true);
   assert.equal(report.total, 20);
   assert.equal(report.hitRate, 1);
+
+  const statePath = path.join(root, 'data/index-state.json');
+  fs.rmSync(statePath);
+  run(root, ['sync-state']);
+  const syncedState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(syncedState.version, 2);
+  assert.equal(syncedState.syncedFromValidatedSchemaV2Table, true);
+});
+
+test('sync-state refuses to stamp a legacy table as schema v2', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-sync-state-legacy-'));
+  const docs = path.join(root, 'docs');
+  fs.mkdirSync(path.join(root, 'config'), { recursive: true });
+  fs.mkdirSync(docs, { recursive: true });
+  fs.writeFileSync(path.join(docs, 'legacy.md'), '# Legacy\n\nLegacy table fixture.');
+  const config = {
+    version: 1,
+    dbPath: './data/lancedb',
+    tableName: 'knowledge_chunks',
+    embedding: { provider: 'local-hash-v1', model: 'local-hash-v1', dimensions: 8 },
+    enrichment: { enabled: false },
+    sources: [{ id: 'fixture', project: 'Fixture', sourceType: 'project_doc', root: docs, include: ['**/*.md'], exclude: [] }]
+  };
+  fs.writeFileSync(path.join(root, 'config/source-map.json'), JSON.stringify(config, null, 2));
+  const db = await lancedb.connect(path.join(root, 'data/lancedb'));
+  await db.createTable('knowledge_chunks', [{
+    id: 'legacy-row', source_path: path.join(docs, 'legacy.md'), project: 'Fixture',
+    chunk_text: 'Legacy table fixture.', vector: Array(8).fill(0.125)
+  }]);
+
+  const result = spawnSync(process.execPath, [cli, 'sync-state'], { cwd: root, encoding: 'utf8' });
+  assert.notEqual(result.status, 0, `sync-state unexpectedly succeeded:\n${result.stdout}`);
+  assert.match(`${result.stderr}\n${result.stdout}`, /schema v2|full index|legacy/i);
+  assert.equal(fs.existsSync(path.join(root, 'data/index-state.json')), false);
 });

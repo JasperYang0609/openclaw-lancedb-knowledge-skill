@@ -29,6 +29,7 @@ For every input JSONL row, return exactly one JSON object on one line. Return no
 Rules:
 
 - `importance` is an integer from 1 to 5.
+- `schema_version` is required and must be the integer `1`; missing, string, fractional, or unsupported versions are rejected.
 - `confidence` is from 0 to 1 and must reflect classification certainty, not writing quality.
 - Use at most 12 tags and 10 entries in each list.
 - Never infer a decision, risk, owner, date, or action that is not stated in `chunk_text`.
@@ -41,4 +42,4 @@ Validate before indexing:
 npm run enrich:validate -- --input data/enrichment/model-output.jsonl
 ```
 
-Invalid rows are rejected. Rows below `enrichment.minConfidence` are retained only as `low_confidence` and always marked `ai_needs_review=true`. Missing or rejected rows fall back to deterministic metadata; core retrieval remains usable.
+Invalid rows are rejected. Rows below `enrichment.minConfidence` are retained only as `low_confidence`, always marked `ai_needs_review=true`, and ignored by reranking. Missing or rejected rows fall back to deterministic metadata; core retrieval remains usable.
