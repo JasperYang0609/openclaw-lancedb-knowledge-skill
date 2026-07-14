@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import * as lancedb from '@lancedb/lancedb';
 import { loadConfig, buildChunks } from './sources.js';
 import { embedLocalHash } from './embed-local.js';
 import { getEmbedder, cacheKey as embeddingCacheKey, compactEmbeddingCache } from './embed-google.js';
+import { loadEnrichmentCache, applyAuxiliaryEnrichment, validateEnrichmentJsonl } from './enrichment.js';
+import { evaluateBenchmark, benchmarkPasses } from './benchmark.js';
 
 function arg(name, fallback = undefined) {
   const idx = process.argv.indexOf(`--${name}`);
@@ -14,6 +18,35 @@ function arg(name, fallback = undefined) {
 function flag(name) { return process.argv.includes(`--${name}`); }
 function ensureDir(p) { fs.mkdirSync(p, { recursive: true }); }
 function nowStamp() { return new Date().toISOString().replace(/[:.]/g, '-'); }
+
+const INDEX_SCHEMA_VERSION = 2;
+
+function enrichmentState(config) {
+  const loaded = loadEnrichmentCache(config.enrichment || {});
+  return {
+    enabled: loaded.enabled,
+    inputPath: loaded.inputPath || null,
+    inputSha256: loaded.sha256 || null,
+    minConfidence: config.enrichment?.minConfidence ?? 0.75,
+    valid: loaded.stats.valid,
+    invalid: loaded.stats.invalid
+  };
+}
+
+function buildFingerprint(config) {
+  const semantic = {
+    schemaVersion: INDEX_SCHEMA_VERSION,
+    embedding: {
+      provider: config.embedding?.provider ?? null,
+      model: config.embedding?.model ?? null,
+      dimensions: config.embedding?.dimensions ?? null,
+      documentTaskType: config.embedding?.documentTaskType ?? null
+    },
+    chunking: config.chunking || {},
+    enrichment: enrichmentState(config)
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(semantic)).digest('hex');
+}
 
 function statePath() { return path.resolve('data/index-state.json'); }
 function loadIndexState() {
@@ -51,11 +84,14 @@ function writeIndexState(config, built, extra = {}, { merge = false } = {}) {
     if (prev?.files) mergedFiles = { ...prev.files, ...files };
   }
   const state = {
-    version: 1,
+    version: INDEX_SCHEMA_VERSION,
     updatedAt: new Date().toISOString(),
     tableName: config.tableName || 'knowledge_chunks',
     dbPath: path.resolve(config.dbPath || './data/lancedb'),
     embedding: config.embedding,
+    chunking: config.chunking,
+    enrichment: enrichmentState(config),
+    buildFingerprint: buildFingerprint(config),
     // Always derive docs from the state file map: with a partial index + overwrite, built.docs
     // counts the whole corpus and would contradict the filtered files/chunks in the same state.
     docs: Object.keys(mergedFiles).length,
@@ -90,13 +126,19 @@ function chunkEmbedText(c) {
 }
 
 async function rowsForChunks(config, chunks) {
+  const enrichment = loadEnrichmentCache(config.enrichment || {});
+  const prepared = chunks.map((chunk) => applyAuxiliaryEnrichment(
+    chunk,
+    enrichment.records.get(chunk.id) || null,
+    { enabled: enrichment.enabled }
+  ));
   const dims = config.embedding?.dimensions || 384;
   let vectors;
   let embeddingProvider = config.embedding?.provider || 'local-hash-v1';
   if (embeddingProvider === 'google-gemini') {
     const embedder = getEmbedder(config.embedding);
     vectors = await embedder.embedDocuments(
-      chunks.map((c) => chunkEmbedText(c)),
+      prepared.map((c) => chunkEmbedText(c)),
       (p) => {
         if (p.phase === 'cache') console.error(`[embedding] cache hit ${p.cached}/${p.total}; remote ${p.missing}`);
         if (p.phase === 'remote') console.error(`[embedding] remote embedded ${p.done}/${p.total} (+${p.batchSize})`);
@@ -104,9 +146,9 @@ async function rowsForChunks(config, chunks) {
     );
   } else {
     embeddingProvider = 'local-hash-v1';
-    vectors = chunks.map((c) => embedLocalHash(chunkEmbedText(c), dims));
+    vectors = prepared.map((c) => embedLocalHash(chunkEmbedText(c), dims));
   }
-  return chunks.map((c, i) => ({
+  return prepared.map((c, i) => ({
     ...c,
     embedding_provider: embeddingProvider,
     embedding_model: config.embedding?.model || embeddingProvider,
@@ -196,9 +238,65 @@ async function commandIndex(config) {
 }
 
 
+async function validateSyncStateTable(config, table, built) {
+  const schema = await table.schema();
+  const fields = new Map(schema.fields.map((field) => [field.name, field]));
+  const required = [
+    'id', 'content_sha256', 'deterministic_doc_type', 'deterministic_tags_json',
+    'deterministic_importance', 'deterministic_metadata_version', 'ai_enrichment_status',
+    'ai_enrichment_schema_version', 'embedding_provider', 'embedding_model',
+    'embedding_dimensions', 'vector'
+  ];
+  const missing = required.filter((name) => !fields.has(name));
+  if (missing.length) throw new Error(`[sync-state] table is not schema v2 (missing: ${missing.join(', ')}); run a full index rebuild`);
+  const vectorDimensions = Number(fields.get('vector')?.type?.listSize);
+  if (vectorDimensions !== Number(config.embedding?.dimensions)) {
+    throw new Error(`[sync-state] table vector dimensions ${vectorDimensions || 'unknown'} do not match configured ${config.embedding?.dimensions}; run a full index rebuild`);
+  }
+
+  const enrichment = loadEnrichmentCache(config.enrichment || {});
+  const expected = new Map(built.chunks.map((chunk) => {
+    const row = applyAuxiliaryEnrichment(chunk, enrichment.records.get(chunk.id), { enabled: enrichment.enabled });
+    return [chunk.id, row];
+  }));
+  const selected = [
+    'id', 'content_sha256', 'deterministic_doc_type', 'deterministic_tags_json',
+    'deterministic_importance', 'deterministic_metadata_version', 'ai_doc_type',
+    'ai_tags_json', 'ai_importance', 'ai_summary', 'ai_decisions_json', 'ai_risks_json',
+    'ai_action_items_json', 'ai_confidence', 'ai_needs_review', 'ai_enrichment_status',
+    'ai_enrichment_model', 'ai_enrichment_schema_version', 'embedding_provider',
+    'embedding_model', 'embedding_dimensions'
+  ];
+  const rows = await table.query().select(selected).toArray();
+  if (rows.length !== expected.size) {
+    throw new Error(`[sync-state] table rows ${rows.length} do not match current chunks ${expected.size}; run a full index rebuild`);
+  }
+  const exactFields = selected.filter((name) => !['id', 'embedding_provider', 'embedding_model', 'embedding_dimensions'].includes(name));
+  for (const row of rows) {
+    const wanted = expected.get(row.id);
+    if (!wanted) throw new Error(`[sync-state] table contains an unexpected chunk id; run a full index rebuild`);
+    for (const field of exactFields) {
+      if (row[field] !== wanted[field]) throw new Error(`[sync-state] table field ${field} does not match current sources/enrichment; run a full index rebuild`);
+    }
+    if (row.embedding_provider !== config.embedding?.provider ||
+        row.embedding_model !== config.embedding?.model ||
+        Number(row.embedding_dimensions) !== Number(config.embedding?.dimensions)) {
+      throw new Error('[sync-state] table embedding metadata does not match configuration; run a full index rebuild');
+    }
+    expected.delete(row.id);
+  }
+  if (expected.size) throw new Error('[sync-state] table is missing current chunks; run a full index rebuild');
+}
+
 async function commandSyncState(config) {
   const built = buildChunks(config);
-  const state = writeIndexState(config, built, { syncedFromCurrentSourcesOnly: true });
+  const db = await openDb(config);
+  const tableName = config.tableName || 'knowledge_chunks';
+  let table;
+  try { table = await db.openTable(tableName); }
+  catch { throw new Error(`[sync-state] table ${tableName} is missing; run a full index rebuild`); }
+  await validateSyncStateTable(config, table, built);
+  const state = writeIndexState(config, built, { syncedFromValidatedSchemaV2Table: true });
   console.log(JSON.stringify({ ok: true, statePath: statePath(), docs: state.docs, chunks: state.chunks, files: Object.keys(state.files).length }, null, 2));
 }
 
@@ -218,26 +316,31 @@ async function commandIncremental(config) {
     console.error('[incremental] state missing; falling back to one-time full index to establish baseline');
     return commandIndex(config);
   }
+  if (state.version !== INDEX_SCHEMA_VERSION) {
+    console.error(`[incremental] index schema ${state.version || 'legacy'} -> ${INDEX_SCHEMA_VERSION}; running a one-time full rebuild`);
+    return commandIndex(config);
+  }
+  const vectorFingerprint = (embedding = {}) => JSON.stringify({
+    provider: embedding.provider ?? null,
+    model: embedding.model ?? null,
+    dimensions: embedding.dimensions ?? null,
+    documentTaskType: embedding.documentTaskType ?? null
+  });
+  if (vectorFingerprint(state.embedding) !== vectorFingerprint(config.embedding)) {
+    console.error('[incremental] embedding semantics changed; running a one-time full rebuild');
+    return commandIndex(config);
+  }
 
   const currentByPath = groupChunksByPath(built.chunks);
   const currentPaths = new Set(currentByPath.keys());
   const previousPaths = new Set(Object.keys(state.files));
   const removedPaths = [...previousPaths].filter((p) => !currentPaths.has(p));
-  // Compare only the four keys that change vector semantics; tuning throttleMs/batchSize/cachePath
-  // and similar settings must not trigger a full re-embed.
-  const embedFingerprint = (e = {}) => JSON.stringify({
-    provider: e.provider ?? null,
-    model: e.model ?? null,
-    dimensions: e.dimensions ?? null,
-    documentTaskType: e.documentTaskType ?? null
-  });
-  const prevEmbedding = embedFingerprint(state.embedding || {});
-  const currentEmbedding = embedFingerprint(config.embedding || {});
+  const semanticsChanged = state.buildFingerprint !== buildFingerprint(config);
   const changedPaths = [];
   for (const [p, chunks] of currentByPath) {
     const prev = state.files[p];
     const sha = chunks[0]?.file_sha256;
-    if (!prev || prev.file_sha256 !== sha || prevEmbedding !== currentEmbedding) changedPaths.push(p);
+    if (!prev || prev.file_sha256 !== sha || semanticsChanged) changedPaths.push(p);
   }
 
   const changedChunks = changedPaths.flatMap((p) => currentByPath.get(p) || []);
@@ -348,11 +451,12 @@ function sourceProgressBoost(row) {
   return b;
 }
 
-function rerankRows(rows, query) {
+export function rerankRows(rows, query) {
   const qTerms = rankTerms(query);
   const progress = isProgressQuery(query);
   return rows.map((r) => {
-    const hay = `${r.project} ${r.title} ${r.heading} ${r.rel_path} ${r.chunk_text}`.toLowerCase();
+    const trustedAiText = r.ai_enrichment_status === 'valid' ? `${r.ai_tags_json || ''} ${r.ai_summary || ''}` : '';
+    const hay = `${r.project} ${r.title} ${r.heading} ${r.rel_path} ${r.deterministic_tags_json || ''} ${trustedAiText} ${r.chunk_text}`.toLowerCase();
     const overlap = qTerms.length ? qTerms.filter((t) => hay.includes(t.toLowerCase())).length / qTerms.length : 0;
     const vector = typeof r._distance === 'number' ? 1 / (1 + r._distance) : 0;
     const recency = progress ? dateScore(r.date) : 0;
@@ -364,12 +468,7 @@ function rerankRows(rows, query) {
 
 function escapeSqlString(s) { return s.replaceAll("'", "''"); }
 
-async function commandSearch(config) {
-  const queryParts = process.argv.slice(3).filter((x, i, arr) => !arr[i - 1]?.startsWith('--') && !x.startsWith('--'));
-  const query = queryParts.join(' ').trim() || arg('query', '');
-  if (!query) throw new Error('Usage: npm run search -- "query" [-- --project BeanGo --limit 5]');
-  const limit = Number(arg('limit', '5')) || 5;
-  const project = arg('project', '');
+async function searchRows(config, query, { limit = 5, project = '' } = {}) {
   const dims = config.embedding?.dimensions || 384;
   let queryVector;
   const embeddingProvider = config.embedding?.provider || 'local-hash-v1';
@@ -384,7 +483,16 @@ async function commandSearch(config) {
   let search = table.search(queryVector);
   if (project) search = search.where(`project = '${escapeSqlString(project)}'`);
   const fetchLimit = Math.max(limit * 20, 80);
-  const rows = rerankRows(await search.limit(fetchLimit).toArray(), query).slice(0, limit);
+  return rerankRows(await search.limit(fetchLimit).toArray(), query).slice(0, limit);
+}
+
+async function commandSearch(config) {
+  const queryParts = process.argv.slice(3).filter((x, i, arr) => !arr[i - 1]?.startsWith('--') && !x.startsWith('--'));
+  const query = queryParts.join(' ').trim() || arg('query', '');
+  if (!query) throw new Error('Usage: npm run search -- "query" [-- --project BeanGo --limit 5]');
+  const limit = Number(arg('limit', '5')) || 5;
+  const project = arg('project', '');
+  const rows = await searchRows(config, query, { limit, project });
   console.log(`# Search: ${query}\n`);
   if (project) console.log(`Project filter: ${project}\n`);
   rows.forEach((r, idx) => {
@@ -401,6 +509,69 @@ async function commandSearch(config) {
   });
 }
 
+async function commandPrepareEnrichment(config) {
+  const built = buildChunks(config);
+  const limit = Number(arg('limit', '0')) || 0;
+  const chunks = limit > 0 ? built.chunks.slice(0, limit) : built.chunks;
+  const output = path.resolve(arg('output', './data/enrichment/input.jsonl'));
+  ensureDir(path.dirname(output));
+  const rows = chunks.map((chunk) => ({
+    schema_version: 1,
+    id: chunk.id,
+    authoritative: {
+      project: chunk.project,
+      source_type: chunk.source_type,
+      title: chunk.title,
+      heading: chunk.heading,
+      date: chunk.date,
+      channel: chunk.channel
+    },
+    deterministic: {
+      doc_type: chunk.deterministic_doc_type,
+      tags: JSON.parse(chunk.deterministic_tags_json),
+      importance: chunk.deterministic_importance
+    },
+    chunk_text: chunk.chunk_text
+  }));
+  fs.writeFileSync(output, rows.map((row) => JSON.stringify(row) + '\n').join(''));
+  console.log(JSON.stringify({ ok: true, output, chunks: rows.length, note: 'Local JSONL only. External model use requires explicit privacy approval.' }, null, 2));
+}
+
+async function commandValidateEnrichment(config) {
+  const input = arg('input', '');
+  if (!input) throw new Error('Usage: npm run enrich:validate -- --input path/to/model-output.jsonl [--output path]');
+  const output = arg('output', config.enrichment?.inputPath || './data/enrichment/validated.jsonl');
+  const report = validateEnrichmentJsonl(input, output, { minConfidence: config.enrichment?.minConfidence ?? 0.75 });
+  console.log(JSON.stringify(report, null, 2));
+  if (report.invalid && !flag('allow-partial')) throw new Error(`Enrichment validation failed for ${report.invalid} row(s); validated rows were written but indexing is blocked without --allow-partial`);
+}
+
+async function commandBenchmark(config) {
+  const file = path.resolve(arg('file', './config/benchmark.json'));
+  if (!fs.existsSync(file)) throw new Error(`Benchmark file not found: ${file}`);
+  const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const cases = Array.isArray(payload) ? payload : payload.cases;
+  const k = Number(arg('k', String(payload.k || 5))) || 5;
+  const releaseGate = flag('release-gate');
+  const results = new Map();
+  for (const item of cases) {
+    results.set(item.id, await searchRows(config, item.query, { limit: k, project: item.project || '' }));
+  }
+  const report = evaluateBenchmark(cases, results, { k, releaseGate });
+  const thresholds = {
+    minHitRate: Number(arg('min-hit-rate', String(payload.minHitRate ?? 0.8))),
+    minMrr: Number(arg('min-mrr', String(payload.minMrr ?? 0.6)))
+  };
+  report.thresholds = thresholds;
+  report.passed = benchmarkPasses(report, thresholds);
+  report.generatedAt = new Date().toISOString();
+  ensureDir('reports');
+  const output = path.resolve(arg('output', './reports/benchmark.latest.json'));
+  fs.writeFileSync(output, JSON.stringify(report, null, 2));
+  console.log(JSON.stringify({ ...report, output }, null, 2));
+  if (releaseGate && !report.passed) throw new Error(`Benchmark gate failed: hitRate=${report.hitRate.toFixed(3)}, mrr=${report.mrr.toFixed(3)}`);
+}
+
 async function main() {
   const cmd = process.argv[2] || 'help';
   const config = loadConfig();
@@ -411,10 +582,16 @@ async function main() {
   if (cmd === 'status') return commandStatus(config);
   if (cmd === 'search') return commandSearch(config);
   if (cmd === 'compact-cache') return commandCompactCache(config);
-  console.log(`knowledge-lancedb commands:\n  scan\n  index [--limit N] [--project NAME] [--append]\n  search "query" [--project NAME] [--limit N]\n  status\n  compact-cache`);
+  if (cmd === 'prepare-enrichment') return commandPrepareEnrichment(config);
+  if (cmd === 'validate-enrichment') return commandValidateEnrichment(config);
+  if (cmd === 'benchmark') return commandBenchmark(config);
+  if (cmd === 'profile') return console.log(JSON.stringify({ embedding: config.embedding, chunking: config.chunking, enrichment: enrichmentState(config), fullReindexRequiredWhenDimensionsChange: true }, null, 2));
+  console.log(`knowledge-lancedb commands:\n  scan\n  index [--limit N] [--project NAME] [--append]\n  incremental\n  search "query" [--project NAME] [--limit N]\n  prepare-enrichment [--output FILE] [--limit N]\n  validate-enrichment --input FILE [--output FILE]\n  benchmark --file FILE [--release-gate]\n  profile\n  status\n  compact-cache`);
 }
 
-main().catch((err) => {
-  console.error(err.stack || String(err));
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(err.stack || String(err));
+    process.exit(1);
+  });
+}

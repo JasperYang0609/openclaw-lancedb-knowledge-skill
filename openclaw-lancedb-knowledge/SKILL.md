@@ -11,10 +11,12 @@ Use this skill to create and operate an OpenClaw-first semantic knowledge layer.
 OpenClaw memory / backup summaries / project docs / Obsidian-style markdown
   -> source-map filters
   -> secret redaction
-  -> markdown heading chunks
+  -> paragraph-aware markdown heading chunks
+  -> authoritative deterministic metadata
+  -> optional validated AI auxiliary metadata
   -> embeddings
   -> local LanceDB table
-  -> source-cited search answers
+  -> benchmarked, source-cited search answers
 ```
 
 ## LLM compatibility rule
@@ -33,9 +35,12 @@ Design every client-facing instruction so a general LLM can follow it without kn
 1. **Confirm scope and privacy.** Identify the workspace, backup summary root, and project-doc roots. If using external embeddings, get explicit approval because redacted private chunks leave the machine.
 2. **Bootstrap or inspect the project.** Use `scripts/bootstrap_openclaw_lancedb.py` for a new install, or inspect an existing `knowledge-lancedb/` folder.
 3. **Edit `config/source-map.json`.** Prefer summary/project/handoff markdown first; add raw chat or code only when needed.
-4. **Run gates.** Run `npm install`, `npm test`, `npm run scan`, then `npm run index` or `npm run incremental`.
-5. **Search before answering historical/project-state questions.** Use project filters when possible and cite source paths in the answer.
-6. **Set daily incremental indexing** after OpenClaw backup jobs, using the bundled `knowledge_index_incremental.sh` wrapper or the platform's cron mechanism.
+4. **Choose a quality profile.** Keep Gemini at `balanced`/768 unless a benchmark justifies the opt-in 3072-dimensional `high-quality` profile. Changing dimensions requires a full rebuild.
+5. **Run gates.** Run `npm install`, `npm test`, `npm run scan`, then `npm run index` or `npm run incremental`.
+6. **Benchmark retrieval.** Maintain 20–50 source-grounded queries and run the release gate before adopting a quality change.
+7. **Use AI enrichment only as an optional second layer.** Deterministic fields remain authoritative; validate JSONL output and review low-confidence rows.
+8. **Search before answering historical/project-state questions.** Use project filters when possible and cite source paths in the answer.
+9. **Set daily incremental indexing** after OpenClaw backup jobs, using the bundled `knowledge_index_incremental.sh` wrapper or the platform's cron mechanism.
 
 ## Bootstrap command
 
@@ -56,9 +61,12 @@ Use local-only embeddings by default. To enable Google Gemini embeddings:
 ```bash
 python3 scripts/bootstrap_openclaw_lancedb.py \
   --google-gemini \
+  --embedding-profile balanced \
   --approved-by "Client approved external embeddings on YYYY-MM-DD" \
   --overwrite
 ```
+
+For an opt-in 3072-dimensional rebuild, use `--embedding-profile high-quality`. Do not switch an existing index in place: back it up, update config, run a full `npm run index`, then pass the benchmark gate.
 
 ## Commands after bootstrap
 
@@ -69,8 +77,35 @@ npm run index
 npm run status
 npm run search -- "VASO 文件中心做到哪" -- --project VASO --limit 5
 npm run incremental
+npm run profile
 npm run postrun:check
 ```
+
+## Optional AI enrichment
+
+AI enrichment may add `ai_tags_json`, `ai_doc_type`, `ai_importance`, `ai_summary`, `ai_decisions_json`, `ai_risks_json`, and `ai_action_items_json`. It may never replace `project`, `source_type`, paths, title, heading, date, channel, hashes, chunk IDs, or source text.
+
+```bash
+# Local only: creates redacted JSONL; it does not call a model.
+npm run enrich:prepare -- --output data/enrichment/input.jsonl
+
+# Process input.jsonl with any approved model using config/enrichment-contract.md,
+# then validate the one-object-per-line output.
+npm run enrich:validate -- --input data/enrichment/model-output.jsonl
+```
+
+Only after validation, set `enrichment.enabled=true` and point `enrichment.inputPath` at the validated file. The validator requires integer `schema_version: 1`. Rows below `minConfidence` are stored as `low_confidence` with `ai_needs_review=true` and are excluded from reranking. Missing or invalid output falls back to deterministic metadata, so an AI failure cannot remove the core index.
+
+## Retrieval benchmark gate
+
+Copy and customize the 20-case scaffold:
+
+```bash
+cp config/benchmark.example.json config/benchmark.json
+npm run benchmark -- --file config/benchmark.json --release-gate
+```
+
+The gate reports Hit@K and mean reciprocal rank (MRR). Expectations are matched against source-grounded fields such as project, source type, path, title, heading, or chunk text. Do not publish a quality claim from the generic example; replace every case with real, reviewed ground truth for that corpus.
 
 ## Answer pattern after retrieval
 
@@ -88,7 +123,10 @@ If retrieval is weak, say so and run a narrower search with project/channel/date
 - Do not index secrets intentionally. Keep `**/*secret*`, `**/*token*`, `.env`, `.git`, `node_modules`, builds, and media out by default.
 - Secret redaction is a guardrail, not permission to ingest credentials.
 - External embedding providers require explicit approval per client/project.
+- Sending enrichment input to an external LLM requires a separate explicit approval; preparing or validating local JSONL does not upload it.
+- AI enrichment is auxiliary and confidence-gated. Never use an AI tag as the only retrieval path or as authority over deterministic metadata.
 - Changing embedding model or dimensions requires full reindex.
+- Back up the LanceDB directory and embedding cache before a profile migration; 768- and 3072-dimensional vectors use separate caches and table schemas.
 - Do not index raw Discord/chat backups first unless summaries are insufficient; raw data is noisy and privacy-heavy.
 
 ## Memory index health and provider migration

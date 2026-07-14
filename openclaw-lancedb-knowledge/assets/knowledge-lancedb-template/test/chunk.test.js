@@ -39,6 +39,22 @@ test('brand heuristic is reachable before ops fallback', () => {
   assert.equal(chunks[0].project, 'AnsaiBrand');
 });
 
+test('paragraph-aware chunking avoids fixed-width cuts when sections are oversized', () => {
+  const paragraphs = Array.from({ length: 5 }, (_, i) => `PARAGRAPH_${i} ` + (`word${i} `.repeat(35)).trim());
+  const chunks = chunkMarkdown({
+    source: { id: 's4', project: 'Quality', sourceType: 'project_doc' },
+    absPath: '/tmp/quality.md',
+    relPath: 'quality.md',
+    content: `# Quality\n\n${paragraphs.join('\n\n')}`,
+    options: { maxChars: 420, overlapChars: 0 }
+  });
+  assert.ok(chunks.length >= 3);
+  assert.ok(chunks.every((chunk) => chunk.chunk_text.length <= 420));
+  for (const paragraph of paragraphs) {
+    assert.equal(chunks.filter((chunk) => chunk.chunk_text.includes(paragraph)).length, 1);
+  }
+});
+
 test('l2Normalize returns unit vectors and guards zero vectors', () => {
   const v = l2Normalize([3, 4]);
   assert.ok(Math.abs(Math.sqrt(v[0] * v[0] + v[1] * v[1]) - 1) < 1e-12);

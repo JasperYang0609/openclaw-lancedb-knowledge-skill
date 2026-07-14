@@ -25,7 +25,7 @@ test('redacts extended provider tokens and credentials', () => {
     '123456789' + ':AA' + 'abcdefghijklmnopqrstuvwxyz0123456',
     'sk_live_' + 'abcdefghijklmnop0123',
     'https://user:' + 'supersecret@example.com/path',
-    '-----BEGIN PRIVATE KEY-----\nMIIfake\n-----END PRIVATE KEY-----',
+    '-----BEGIN ' + 'PRIVATE KEY-----\nfake-key-material\n-----END ' + 'PRIVATE KEY-----',
     '密碼:' + '超級機密123',
     '金鑰: ' + 'abc-def-123',
     '密碼：' + '全形冒號機密456',
