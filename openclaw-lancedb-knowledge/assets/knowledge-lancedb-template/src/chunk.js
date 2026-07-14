@@ -10,16 +10,61 @@ function estimateTokens(text) {
   return Math.max(text.split(/\s+/).filter(Boolean).length, Math.ceil([...text].length / 3));
 }
 
+function hardSplit(text, maxChars, overlapChars) {
+  const chunks = [];
+  const overlap = Math.max(0, Math.min(overlapChars, Math.floor(maxChars / 2)));
+  let start = 0;
+  while (start < text.length) {
+    const target = Math.min(text.length, start + maxChars);
+    let end = target;
+    if (target < text.length) {
+      const window = text.slice(start, target);
+      const candidates = [
+        window.lastIndexOf('\n'), window.lastIndexOf('。'), window.lastIndexOf('！'),
+        window.lastIndexOf('？'), window.lastIndexOf('. '), window.lastIndexOf(' ')
+      ];
+      const boundary = Math.max(...candidates);
+      if (boundary >= Math.floor(maxChars * 0.55)) end = start + boundary + 1;
+    }
+    const part = text.slice(start, end).trim();
+    if (part) chunks.push(part);
+    if (end >= text.length) break;
+    start = Math.max(start + 1, end - overlap);
+  }
+  return chunks;
+}
+
 function splitOversized(text, maxChars = 3600, overlapChars = 350) {
   if (text.length <= maxChars) return [text];
+  const paragraphs = text.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
   const chunks = [];
-  let i = 0;
-  while (i < text.length) {
-    const end = Math.min(text.length, i + maxChars);
-    chunks.push(text.slice(i, end));
-    if (end === text.length) break;
-    i = Math.max(0, end - overlapChars);
+  let current = '';
+  const flush = () => {
+    if (current) chunks.push(current);
+    current = '';
+  };
+  for (const paragraph of paragraphs) {
+    if (paragraph.length > maxChars) {
+      flush();
+      chunks.push(...hardSplit(paragraph, maxChars, overlapChars));
+      continue;
+    }
+    const candidate = current ? `${current}\n\n${paragraph}` : paragraph;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+    const previous = current;
+    flush();
+    if (overlapChars > 0 && previous) {
+      const tail = previous.slice(-Math.min(overlapChars, previous.length)).trim();
+      const withOverlap = tail ? `${tail}\n\n${paragraph}` : paragraph;
+      current = withOverlap.length <= maxChars ? withOverlap : paragraph;
+    } else {
+      current = paragraph;
+    }
   }
+  flush();
   return chunks;
 }
 
@@ -62,7 +107,7 @@ function inferProject(source, relPath) {
   return 'General';
 }
 
-export function chunkMarkdown({ source, absPath, relPath, content }) {
+export function chunkMarkdown({ source, absPath, relPath, content, options = {} }) {
   const title = inferTitle(relPath, content);
   const date = inferDate(relPath, content);
   const channel = inferChannel(absPath);
@@ -94,7 +139,11 @@ export function chunkMarkdown({ source, absPath, relPath, content }) {
   const chunks = [];
   let chunkIndex = 0;
   for (const section of sections.length ? sections : [{ heading: title, text: content }]) {
-    for (const part of splitOversized(section.text)) {
+    for (const part of splitOversized(
+      section.text,
+      Number(options.maxChars) || 3600,
+      options.overlapChars === 0 ? 0 : (Number(options.overlapChars) || 350)
+    )) {
       const trimmed = part.trim();
       if (trimmed.length < 40) continue;
       chunks.push({

@@ -5,7 +5,19 @@
   "embedding": {
     "provider": "local-hash-v1",
     "model": "local-hash-v1",
+    "profile": "balanced",
     "dimensions": 384,
+    "privacyApprovedAt": null,
+    "privacyApprovedBy": null
+  },
+  "chunking": {
+    "maxChars": 3600,
+    "overlapChars": 350
+  },
+  "enrichment": {
+    "enabled": false,
+    "inputPath": "./data/enrichment/validated.jsonl",
+    "minConfidence": 0.75,
     "privacyApprovedAt": null,
     "privacyApprovedBy": null
   },

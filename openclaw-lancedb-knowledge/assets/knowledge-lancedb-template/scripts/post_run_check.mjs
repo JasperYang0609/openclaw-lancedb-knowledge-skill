@@ -23,15 +23,20 @@ async function readJson(rel) {
   return JSON.parse(await fs.readFile(path.join(root, rel), "utf8"));
 }
 
-record("required files exist", await exists("src/cli.js") && await exists("src/security.js") && await exists("config/source-map.example.json"));
+record("required files exist", await exists("src/cli.js") && await exists("src/security.js") && await exists("src/metadata.js") && await exists("src/enrichment.js") && await exists("config/source-map.example.json"));
 
 const pkg = await readJson("package.json");
 record("package exposes post-run check", pkg.scripts?.["postrun:check"] === "node scripts/post_run_check.mjs");
-record("core scripts present", ["scan", "index", "search", "status", "test", "incremental", "sync-state", "compact-cache"].every((key) => pkg.scripts?.[key]));
+record("core scripts present", ["scan", "index", "search", "status", "test", "incremental", "sync-state", "compact-cache", "enrich:prepare", "enrich:validate", "benchmark", "profile"].every((key) => pkg.scripts?.[key]));
 
 const sourceMap = await readJson("config/source-map.example.json");
 record("source map has sources", Array.isArray(sourceMap.sources) && sourceMap.sources.length > 0);
 record("source map excludes common secret paths", JSON.stringify(sourceMap).includes("secret") && JSON.stringify(sourceMap).includes(".env"));
+record("AI enrichment is opt-in", sourceMap.enrichment?.enabled === false);
+
+const benchmark = await readJson("config/benchmark.example.json");
+record("release benchmark scaffold has at least 20 cases", Array.isArray(benchmark.cases) && benchmark.cases.length >= 20);
+record("enrichment contract exists", await exists("config/enrichment-contract.md"));
 
 const wrapper = await fs.readFile(path.join(root, "scripts/knowledge_index_incremental.sh"), "utf8");
 record("incremental wrapper uses lock", wrapper.includes("index.lock") && wrapper.includes("mkdir \"$LOCK_DIR\""));

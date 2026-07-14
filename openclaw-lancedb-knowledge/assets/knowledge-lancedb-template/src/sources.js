@@ -4,10 +4,12 @@ import crypto from 'node:crypto';
 import { walkFiles, matchAny } from './glob-lite.js';
 import { looksBinary, redactSecrets } from './security.js';
 import { chunkMarkdown } from './chunk.js';
+import { deriveDeterministicMetadata } from './metadata.js';
+import { resolveQualityConfig } from './quality-profile.js';
 
 export function loadConfig() {
   const cfgPath = path.resolve('config/source-map.json');
-  return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  return resolveQualityConfig(JSON.parse(fs.readFileSync(cfgPath, 'utf8')));
 }
 
 function fileSha256(buf) {
@@ -70,10 +72,11 @@ export function buildChunks(config) {
   for (const doc of docs) {
     const red = redactSecrets(doc.raw);
     if (red.hits.length) secretHits.push({ path: doc.absPath, hits: red.hits });
-    const docChunks = chunkMarkdown({ ...doc, content: red.text });
+    const docChunks = chunkMarkdown({ ...doc, content: red.text, options: config.chunking || {} });
     for (const c of docChunks) {
       chunks.push({
         ...c,
+        ...deriveDeterministicMetadata(c),
         file_sha256: doc.fileSha256,
         file_mtime_ms: doc.mtimeMs,
         file_bytes: doc.bytes,

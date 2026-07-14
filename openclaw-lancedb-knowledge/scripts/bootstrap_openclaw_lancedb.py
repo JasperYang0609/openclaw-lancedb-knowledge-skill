@@ -34,6 +34,7 @@ def main() -> int:
     parser.add_argument("--project-root", default="", help="Client/project docs root to index")
     parser.add_argument("--project-name", default="ClientProject", help="Project label stored in LanceDB rows")
     parser.add_argument("--google-gemini", action="store_true", help="Use Google Gemini embeddings instead of local hash embeddings")
+    parser.add_argument("--embedding-profile", choices=["balanced", "high-quality"], default="balanced", help="Balanced uses 768 Gemini dimensions; high-quality uses 3072 and requires a full rebuild")
     parser.add_argument("--approved-by", default="", help="Required note when enabling external embeddings")
     parser.add_argument("--npm-install", action="store_true", help="Run npm install after copying files")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing template files in target")
@@ -51,6 +52,8 @@ def main() -> int:
 
     if args.google_gemini and not args.approved_by:
         raise SystemExit("--approved-by is required with --google-gemini because private chunks leave the machine for embedding.")
+    if args.embedding_profile == "high-quality" and not args.google_gemini:
+        raise SystemExit("--embedding-profile high-quality currently requires --google-gemini.")
 
     copytree(template, target, args.overwrite)
     (target / "data").mkdir(exist_ok=True)
@@ -68,18 +71,22 @@ def main() -> int:
             src["project"] = args.project_name
 
     if args.google_gemini:
+        dimensions = 3072 if args.embedding_profile == "high-quality" else 768
         cfg["embedding"] = {
             "provider": "google-gemini",
             "model": "gemini-embedding-001",
-            "dimensions": 768,
+            "profile": args.embedding_profile,
+            "dimensions": dimensions,
             "documentTaskType": "RETRIEVAL_DOCUMENT",
             "queryTaskType": "RETRIEVAL_QUERY",
             "batchSize": 40,
             "throttleMs": 250,
-            "cachePath": "./data/embedding-cache/google-gemini-embedding-001-768.jsonl",
+            "cachePath": f"./data/embedding-cache/google-gemini-embedding-001-{dimensions}.jsonl",
             "privacyApprovedAt": datetime.now(timezone.utc).isoformat(),
             "privacyApprovedBy": args.approved_by,
         }
+        if args.embedding_profile == "high-quality":
+            cfg["chunking"] = {"maxChars": 2800, "overlapChars": 350}
 
     (target / "config" / "source-map.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
 

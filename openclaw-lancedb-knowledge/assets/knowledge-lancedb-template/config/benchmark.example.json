@@ -1,0 +1,27 @@
+{
+  "k": 5,
+  "minHitRate": 0.8,
+  "minMrr": 0.6,
+  "cases": [
+    {"id":"q01","query":"What is the latest project status?","expected":{"project":"ClientProject","sourcePathIncludes":"handoff"}},
+    {"id":"q02","query":"What architecture was chosen?","expected":{"project":"ClientProject","headingIncludes":"architecture"}},
+    {"id":"q03","query":"What release decision was approved?","expected":{"project":"ClientProject","textIncludes":"decision"}},
+    {"id":"q04","query":"What are the current risks?","expected":{"project":"ClientProject","textIncludes":"risk"}},
+    {"id":"q05","query":"What is currently blocked?","expected":{"project":"ClientProject","textIncludes":"blocked"}},
+    {"id":"q06","query":"What action items remain?","expected":{"project":"ClientProject","textIncludes":"action"}},
+    {"id":"q07","query":"How do we run the operating procedure?","expected":{"sourceType":"project_doc","textIncludes":"procedure"}},
+    {"id":"q08","query":"What caused the last incident?","expected":{"project":"ClientProject","textIncludes":"root cause"}},
+    {"id":"q09","query":"What security constraints apply?","expected":{"project":"ClientProject","textIncludes":"security"}},
+    {"id":"q10","query":"Where is the data schema documented?","expected":{"project":"ClientProject","textIncludes":"schema"}},
+    {"id":"q11","query":"What is the migration plan?","expected":{"project":"ClientProject","textIncludes":"migration"}},
+    {"id":"q12","query":"How do we roll back safely?","expected":{"project":"ClientProject","textIncludes":"rollback"}},
+    {"id":"q13","query":"Which API contract should clients use?","expected":{"project":"ClientProject","textIncludes":"api"}},
+    {"id":"q14","query":"What user requirement is authoritative?","expected":{"project":"ClientProject","textIncludes":"requirement"}},
+    {"id":"q15","query":"What did the team agree in the meeting?","expected":{"project":"ClientProject","sourcePathIncludes":"meeting"}},
+    {"id":"q16","query":"What should the next engineer do after handoff?","expected":{"project":"ClientProject","sourcePathIncludes":"handoff"}},
+    {"id":"q17","query":"What lesson did we learn?","expected":{"project":"ClientProject","textIncludes":"lesson"}},
+    {"id":"q18","query":"Which tests prove the change works?","expected":{"project":"ClientProject","textIncludes":"test"}},
+    {"id":"q19","query":"How was deployment verified?","expected":{"project":"ClientProject","textIncludes":"deploy"}},
+    {"id":"q20","query":"Who owns the next step?","expected":{"project":"ClientProject","textIncludes":"owner"}}
+  ]
+}
