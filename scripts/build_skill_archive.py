@@ -14,6 +14,11 @@ EXCLUDED_PARTS = {"node_modules", "__pycache__", "data", "reports"}
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 
 
+def normalized_archive_mode(mode: int) -> int:
+    """Preserve executable semantics while ignoring checkout umask differences."""
+    return 0o755 if mode & 0o111 else 0o644
+
+
 def source_files() -> list[Path]:
     return sorted(
         path
@@ -31,7 +36,7 @@ def build(output: Path) -> None:
             archive_name = Path(SOURCE.name) / path.relative_to(SOURCE)
             info = zipfile.ZipInfo(str(archive_name), date_time=FIXED_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (path.stat().st_mode & 0xFFFF) << 16
+            info.external_attr = normalized_archive_mode(path.stat().st_mode) << 16
             archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 
 
@@ -43,7 +48,7 @@ def archive_manifest(path: Path) -> dict[str, tuple[bytes, int]]:
         for info in archive.infolist():
             if info.filename in manifest:
                 raise ValueError(f"duplicate archive member: {info.filename}")
-            mode = (info.external_attr >> 16) & 0o7777
+            mode = normalized_archive_mode(info.external_attr >> 16)
             manifest[info.filename] = (archive.read(info), mode)
         return manifest
 

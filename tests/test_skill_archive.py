@@ -26,6 +26,14 @@ def repack(source: Path, target: Path, mutate_first: bool = False) -> None:
             rewritten.writestr(replacement, data)
 
 
+
+def write_single_member(path: Path, mode: int) -> None:
+    with zipfile.ZipFile(path, "w") as archive:
+        info = zipfile.ZipInfo("member.txt", date_time=(1980, 1, 1, 0, 0, 0))
+        info.external_attr = mode << 16
+        archive.writestr(info, b"same content")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="skill-archive-test-") as tmp_dir:
         tmp = Path(tmp_dir)
@@ -49,6 +57,15 @@ def main() -> None:
             assert "duplicate archive member" in str(exc)
         else:
             raise AssertionError("duplicate archive member must fail closed")
+
+        mode_600 = tmp / "mode-600.skill"
+        mode_644 = tmp / "mode-644.skill"
+        mode_755 = tmp / "mode-755.skill"
+        write_single_member(mode_600, 0o600)
+        write_single_member(mode_644, 0o644)
+        write_single_member(mode_755, 0o755)
+        assert archive_manifest(mode_600) == archive_manifest(mode_644)
+        assert archive_manifest(mode_644) != archive_manifest(mode_755)
 
     print("PASS test_skill_archive")
 
