@@ -35,6 +35,19 @@ def build(output: Path) -> None:
             archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 
 
+
+def archive_manifest(path: Path) -> dict[str, tuple[bytes, int]]:
+    """Compare logical archive content, independent of zlib/Python output bytes."""
+    with zipfile.ZipFile(path, "r") as archive:
+        manifest: dict[str, tuple[bytes, int]] = {}
+        for info in archive.infolist():
+            if info.filename in manifest:
+                raise ValueError(f"duplicate archive member: {info.filename}")
+            mode = (info.external_attr >> 16) & 0o7777
+            manifest[info.filename] = (archive.read(info), mode)
+        return manifest
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build or verify the deterministic .skill archive")
     parser.add_argument("--check", action="store_true", help="Fail when dist artifact differs from source")
@@ -44,7 +57,7 @@ def main() -> None:
         with tempfile.TemporaryDirectory(prefix="skill-archive-check-") as tmp_dir:
             candidate = Path(tmp_dir) / OUTPUT.name
             build(candidate)
-            if not OUTPUT.exists() or candidate.read_bytes() != OUTPUT.read_bytes():
+            if not OUTPUT.exists() or archive_manifest(candidate) != archive_manifest(OUTPUT):
                 raise SystemExit("dist/openclaw-lancedb-knowledge.skill is stale; rebuild it")
         print(f"PASS skill archive matches {len(source_files())} source files")
         return
