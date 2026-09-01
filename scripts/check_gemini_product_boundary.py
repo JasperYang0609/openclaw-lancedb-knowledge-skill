@@ -21,6 +21,37 @@ FORBIDDEN = (
     "llama-server",
 )
 
+EXPECTED_TEMPLATE_SRC = {
+    "benchmark.js",
+    "chunk.js",
+    "cli.js",
+    "embed-google.js",
+    "enrichment.js",
+    "glob-lite.js",
+    "metadata.js",
+    "quality-profile.js",
+    "security.js",
+    "sources.js",
+}
+
+EXPECTED_PRODUCT_COMMANDS = {
+    "scan",
+    "index",
+    "search",
+    "status",
+    "test",
+    "incremental",
+    "sync-state",
+    "compact-cache",
+    "enrich:prepare",
+    "enrich:validate",
+    "benchmark",
+    "profile",
+    "audit",
+    "snapshot:backup",
+    "postrun:check",
+}
+
 
 def production_files() -> list[Path]:
     roots = [
@@ -55,6 +86,19 @@ def main() -> None:
     if embedding.get("dimensions") != 768:
         raise SystemExit("source-map.example.json balanced profile must use 768 dimensions")
 
+    actual_src = {path.name for path in (TEMPLATE / "src").iterdir() if path.is_file()}
+    if actual_src != EXPECTED_TEMPLATE_SRC:
+        added = sorted(actual_src - EXPECTED_TEMPLATE_SRC)
+        missing = sorted(EXPECTED_TEMPLATE_SRC - actual_src)
+        raise SystemExit(f"unexpected Gemini runtime surface; added={added}, missing={missing}")
+
+    package = json.loads((TEMPLATE / "package.json").read_text())
+    actual_commands = set(package.get("scripts", {}))
+    if actual_commands != EXPECTED_PRODUCT_COMMANDS:
+        added = sorted(actual_commands - EXPECTED_PRODUCT_COMMANDS)
+        missing = sorted(EXPECTED_PRODUCT_COMMANDS - actual_commands)
+        raise SystemExit(f"unexpected Gemini command surface; added={added}, missing={missing}")
+
     readme = (ROOT / "README.md").read_text()
     if "Gemini Edition" not in readme.splitlines()[0]:
         raise SystemExit("README first line must identify the Gemini edition")
@@ -64,11 +108,17 @@ def main() -> None:
     if not ARCHIVE.exists():
         raise SystemExit("packaged skill archive is missing")
     with zipfile.ZipFile(ARCHIVE, "r") as archive:
+        archive_src = set()
         for info in archive.infolist():
             lowered_name = info.filename.lower()
             if any(token in lowered_name for token in FORBIDDEN):
                 raise SystemExit(f"Gemini archive contains forbidden member: {info.filename}")
             assert_clean_blob(f"archive:{info.filename}", archive.read(info))
+            marker = "/assets/knowledge-lancedb-template/src/"
+            if marker in info.filename:
+                archive_src.add(Path(info.filename).name)
+        if archive_src != EXPECTED_TEMPLATE_SRC:
+            raise SystemExit("packaged archive runtime surface does not match the Gemini allowlist")
 
     print(f"PASS Gemini-only product boundary across {len(production_files())} source files and packaged archive")
 

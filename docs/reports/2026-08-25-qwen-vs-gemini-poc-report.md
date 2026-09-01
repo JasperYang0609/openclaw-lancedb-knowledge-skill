@@ -1,5 +1,7 @@
 # Qwen3-Embedding-4B 與 Gemini Embedding 實機對照報告
 
+> 歷史評估證據：本檔不代表此 repository 目前的產品功能。Gemini 版只支援 `gemini-embedding-001`；地端模型的現行 runtime、installer 與文件請見 [`openclaw-lancedb-knowledge-embedding-local`](https://github.com/JasperYang0609/openclaw-lancedb-knowledge-embedding-local)。
+
 日期：2026-08-25
 機器：Apple M1 Pro、16GB 統一記憶體
 結論狀態：POC 通過；Production 切換尚未放行

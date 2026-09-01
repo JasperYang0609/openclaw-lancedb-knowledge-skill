@@ -124,6 +124,40 @@ def main() -> None:
         assert result.returncode != 0
         assert "--approved-by is required" in (result.stderr + result.stdout)
 
+        result = run_bootstrap(tmp / "workspace", env)
+        assert result.returncode != 0
+        assert "protected" in (result.stderr + result.stdout)
+
+        result = run_bootstrap(tmp / "home", env)
+        assert result.returncode != 0
+        assert "protected" in (result.stderr + result.stdout)
+
+        result = run_bootstrap(ROOT, env, "--overwrite")
+        assert result.returncode != 0
+        assert "repository" in (result.stderr + result.stdout)
+
+        unmanaged = tmp / "unmanaged-target"
+        (unmanaged / "src").mkdir(parents=True)
+        sentinel = unmanaged / "src" / "sentinel.txt"
+        sentinel.write_text("must survive", encoding="utf-8")
+        result = run_bootstrap(unmanaged, env, "--overwrite")
+        assert result.returncode != 0
+        assert "not a recognized managed" in (result.stderr + result.stdout)
+        assert sentinel.read_text(encoding="utf-8") == "must survive"
+
+        linked_parent = tmp / "linked-parent"
+        linked_parent.symlink_to(tmp / "real-parent", target_is_directory=True)
+        (tmp / "real-parent").mkdir()
+        result = run_bootstrap(linked_parent / "knowledge-lancedb", env)
+        assert result.returncode != 0
+        assert "symbolic links" in (result.stderr + result.stdout)
+
+        # A bootstrap-created marker authorizes a later overwrite at the exact managed target.
+        result = run_bootstrap(default_target, env, "--overwrite")
+        assert result.returncode == 0, result.stderr
+        marker = json.loads((default_target / ".openclaw-lancedb-install.json").read_text(encoding="utf-8"))
+        assert marker["product"] == "openclaw-lancedb-knowledge-gemini"
+
     print("PASS test_bootstrap_security")
 
 
