@@ -30,6 +30,9 @@ jobs:
       - name: Test bootstrap execution boundary
         working-directory: .
         run: python3 tests/test_bootstrap_security.py
+      - name: Test Python security and archive suite
+        working-directory: .
+        run: python3 -m pytest -q
       - name: Test checksummed knowledge snapshot
         working-directory: .
         run: python3 tests/test_snapshot_knowledge_assets.py

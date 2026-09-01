@@ -34,6 +34,18 @@ EXPECTED_TEMPLATE_SRC = {
     "sources.js",
 }
 
+EXPECTED_TEMPLATE_SCRIPTS = {
+    "audit_cron_tooling.py",
+    "knowledge_index_incremental.sh",
+    "knowledge_search.sh",
+    "post_run_check.mjs",
+    "snapshot_knowledge_assets.py",
+}
+
+EXPECTED_SKILL_SCRIPTS = {
+    "bootstrap_openclaw_lancedb.py",
+}
+
 EXPECTED_PRODUCT_COMMANDS = {
     "scan",
     "index",
@@ -73,6 +85,14 @@ def assert_clean_blob(label: str, data: bytes) -> None:
         raise SystemExit(f"Gemini product boundary violation in {label}: {', '.join(found)}")
 
 
+def assert_exact_files(directory: Path, expected: set[str], label: str) -> None:
+    actual = {path.name for path in directory.iterdir() if path.is_file()}
+    if actual != expected:
+        added = sorted(actual - expected)
+        missing = sorted(expected - actual)
+        raise SystemExit(f"unexpected {label} surface; added={added}, missing={missing}")
+
+
 def main() -> None:
     for path in production_files():
         assert_clean_blob(str(path.relative_to(ROOT)), path.read_bytes())
@@ -86,11 +106,9 @@ def main() -> None:
     if embedding.get("dimensions") != 768:
         raise SystemExit("source-map.example.json balanced profile must use 768 dimensions")
 
-    actual_src = {path.name for path in (TEMPLATE / "src").iterdir() if path.is_file()}
-    if actual_src != EXPECTED_TEMPLATE_SRC:
-        added = sorted(actual_src - EXPECTED_TEMPLATE_SRC)
-        missing = sorted(EXPECTED_TEMPLATE_SRC - actual_src)
-        raise SystemExit(f"unexpected Gemini runtime surface; added={added}, missing={missing}")
+    assert_exact_files(TEMPLATE / "src", EXPECTED_TEMPLATE_SRC, "Gemini runtime")
+    assert_exact_files(TEMPLATE / "scripts", EXPECTED_TEMPLATE_SCRIPTS, "Gemini template script")
+    assert_exact_files(SKILL / "scripts", EXPECTED_SKILL_SCRIPTS, "Gemini bootstrap script")
 
     package = json.loads((TEMPLATE / "package.json").read_text())
     actual_commands = set(package.get("scripts", {}))
@@ -109,6 +127,8 @@ def main() -> None:
         raise SystemExit("packaged skill archive is missing")
     with zipfile.ZipFile(ARCHIVE, "r") as archive:
         archive_src = set()
+        archive_template_scripts = set()
+        archive_skill_scripts = set()
         for info in archive.infolist():
             lowered_name = info.filename.lower()
             if any(token in lowered_name for token in FORBIDDEN):
@@ -117,8 +137,18 @@ def main() -> None:
             marker = "/assets/knowledge-lancedb-template/src/"
             if marker in info.filename:
                 archive_src.add(Path(info.filename).name)
+            template_scripts_marker = "/assets/knowledge-lancedb-template/scripts/"
+            if template_scripts_marker in info.filename:
+                archive_template_scripts.add(Path(info.filename).name)
+            skill_scripts_marker = "openclaw-lancedb-knowledge/scripts/"
+            if info.filename.startswith(skill_scripts_marker):
+                archive_skill_scripts.add(Path(info.filename).name)
         if archive_src != EXPECTED_TEMPLATE_SRC:
             raise SystemExit("packaged archive runtime surface does not match the Gemini allowlist")
+        if archive_template_scripts != EXPECTED_TEMPLATE_SCRIPTS:
+            raise SystemExit("packaged archive template scripts do not match the Gemini allowlist")
+        if archive_skill_scripts != EXPECTED_SKILL_SCRIPTS:
+            raise SystemExit("packaged archive bootstrap scripts do not match the Gemini allowlist")
 
     print(f"PASS Gemini-only product boundary across {len(production_files())} source files and packaged archive")
 
