@@ -2,7 +2,7 @@
 
 Date: 2026-09-01
 
-Status: `OPEN`
+Status: `PASS_PRE_MERGE`
 
 This register is complete only when both the Gemini and local repositories have exact-commit evidence. A scanner-only result is insufficient.
 
@@ -17,16 +17,16 @@ This register is complete only when both the Gemini and local repositories have 
 
 | OWASP 2025 | Gemini repository required evidence | Local repository required evidence | Status |
 | --- | --- | --- | --- |
-| A01 Broken Access Control | bootstrap target and cache boundaries; external approval required | managed-root and Production-path negatives; manifest-bound stop/uninstall | OPEN |
-| A02 Security Misconfiguration | Gemini-only provider default; privacy notice; no Qwen entry | loopback-only, Web UI off, no cloud fallback, restricted files | OPEN |
-| A03 Supply Chain Failures | lockfile audit, archive parity, CI action pins review | immutable model/runtime revisions, checksums, inventory, licenses, audits | OPEN |
-| A04 Cryptographic Failures | API key never logged/committed; HTTPS provider | CSPRNG local credential, mode 0600, HTTPS artifacts, no custom crypto | OPEN |
-| A05 Injection | CLI/path/config validation; no shell interpolation | URL/path/tar/CLI validation, `shell=False`, malicious fixture tests | OPEN |
-| A06 Insecure Design | provider fingerprint and full-reindex boundary | separate identity/index, atomic/idempotent install, no cutover | OPEN |
-| A07 Authentication Failures | N/A with evidence: no product login/session | N/A with evidence: no product login/session | OPEN |
-| A08 Integrity Failures | cache/index/archive integrity and deterministic build | artifact/file hashes, manifest identity, corruption/rollback tests | OPEN |
-| A09 Logging Failures | redacted run/error evidence, no corpus/vector/secret logs | redacted phase/status/receipt, no corpus/vector/secret logs | OPEN |
-| A10 Exceptional Conditions | API/cache/index failure and retry tests | interrupted download, range anomaly, disk/port/PID/staging/cleanup tests | OPEN |
+| A01 Broken Access Control | bootstrap target/cache boundaries and external approval | managed-root and Production-path negatives; manifest-bound stop/uninstall | PASS |
+| A02 Security Misconfiguration | Gemini-only provider default; privacy notice; no local runtime entry | loopback-only, Web UI off, no cloud fallback, restricted files | PASS |
+| A03 Supply Chain Failures | lockfile audit, archive parity, immutable CI actions | immutable model/runtime revisions, checksums, inventory, licenses, audits | PASS |
+| A04 Cryptographic Failures | API key in header only and never logged/committed; HTTPS provider | CSPRNG local credential, mode 0600, HTTPS artifacts, no custom crypto | PASS |
+| A05 Injection | CLI/path/config validation; no shell interpolation | URL/path/tar/CLI validation, `shell=False`, malicious fixture tests | PASS |
+| A06 Insecure Design | pinned provider fingerprint and full-reindex boundary | separate identity/index, atomic/idempotent install, no cutover | PASS |
+| A07 Authentication Failures | N/A with evidence: no product login/session | N/A with evidence: no product login/session | NOT_APPLICABLE_WITH_EVIDENCE |
+| A08 Integrity Failures | numeric/finite/nonzero vector validation, cache/index/archive integrity | artifact/file hashes, manifest identity, corruption/rollback tests | PASS |
+| A09 Logging Failures | redacted run/error evidence, no corpus/vector/secret logs | redacted phase/status/receipt, no corpus/vector/secret logs | PASS |
+| A10 Exceptional Conditions | API/cache failure, managed overwrite, cross-edition and retry tests | interrupted download, range anomaly, disk/port/PID/staging/cleanup tests | PASS |
 
 ## Business Logic Abuse Cases
 
@@ -40,6 +40,15 @@ This register is complete only when both the Gemini and local repositories have 
 ## ASVS Decision
 
 `NOT_APPLICABLE_WITH_EVIDENCE`: neither repository introduces a public Web application, remote product API, authentication, or session boundary. Equivalent CLI, supply-chain, process, filesystem, privacy, and data-integrity controls remain mandatory.
+
+## Exact-Commit Evidence
+
+- Local edition reviewed implementation: `953c4fe85081286d58d660518c8c4926dbfc01fd`; merged public `main`: `7c946d1f86b3c078d5ee5dac99bcc6403055a70f`.
+- Gemini edition reviewed implementation: `027ff7f14d04863e46bff0cbab105086d9bd9178`.
+- Independent Gemini verdict: `MATCHING_PASS`, P0/P1/P2/P3 = `0/0/0/0`.
+- Gemini gates: Node `40/40`, Python `8/8`, bootstrap overwrite/cross-edition negatives, snapshot, dangerous-exec, postrun, deterministic archive parity (`35` files), complete executable-surface allowlists, changed-file secret scan, and `npm audit` with `0` vulnerabilities.
+- Attacker regressions: local-edition legacy overwrite is rejected without changing its sentinel; adding an unknown runtime script makes the product-boundary checker fail closed.
+- Local gates: one-click CLI and installer lifecycle, official artifact resume/checksum, safe extraction, loopback-only runtime, uninstall/restore, archive parity, dependency, secret, and cloud-boundary checks passed before public merge.
 
 ## Release Rule
 
