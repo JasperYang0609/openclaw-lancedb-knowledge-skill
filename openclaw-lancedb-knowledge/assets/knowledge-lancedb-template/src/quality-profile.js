@@ -8,22 +8,28 @@ function cachePathForDimensions(cachePath, dimensions) {
 }
 
 export function resolveEmbeddingProfile(embedding = {}) {
-  const provider = embedding.provider || 'local-hash-v1';
-  const model = embedding.model || (provider === 'google-gemini' ? GEMINI_MODEL : provider);
+  const provider = embedding.provider || 'google-gemini';
+  const model = embedding.model || GEMINI_MODEL;
+  if (provider !== 'google-gemini') {
+    throw new Error('This repository supports only google-gemini. Use openclaw-lancedb-knowledge-embedding-local for local embeddings.');
+  }
+  if (model !== GEMINI_MODEL) {
+    throw new Error(`This repository is pinned to ${GEMINI_MODEL}; received ${model}`);
+  }
   let profile = embedding.profile;
   let dimensions = Number(embedding.dimensions) || 0;
   if (!profile && dimensions) profile = 'custom';
   if (!profile) profile = 'balanced';
   if (!['balanced', 'high-quality', 'custom'].includes(profile)) throw new Error(`Unknown embedding profile: ${profile}`);
-  if (profile === 'balanced') dimensions = provider === 'google-gemini' ? 768 : (dimensions || 384);
-  if (profile === 'high-quality') dimensions = provider === 'google-gemini' ? 3072 : (dimensions || 768);
+  if (profile === 'balanced') dimensions = 768;
+  if (profile === 'high-quality') dimensions = 3072;
   if (profile === 'custom' && !dimensions) throw new Error('Custom embedding profile requires dimensions');
   let cachePath = embedding.cachePath;
-  if (provider === 'google-gemini' && cachePath) {
+  if (cachePath) {
     const encodedDimension = cachePath.match(/[-_](\d+)\.jsonl$/i)?.[1];
     if (!encodedDimension || Number(encodedDimension) !== dimensions) cachePath = cachePathForDimensions(cachePath, dimensions);
   }
-  if (!cachePath && provider === 'google-gemini') cachePath = `./data/embedding-cache/${model}-${dimensions}.jsonl`;
+  if (!cachePath) cachePath = `./data/embedding-cache/${model}-${dimensions}.jsonl`;
   return { ...embedding, provider, model, profile, dimensions, ...(cachePath ? { cachePath } : {}) };
 }
 

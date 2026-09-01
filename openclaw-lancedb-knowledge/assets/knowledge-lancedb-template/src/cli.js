@@ -5,9 +5,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as lancedb from '@lancedb/lancedb';
 import { loadConfig, buildChunks } from './sources.js';
-import { embedLocalHash } from './embed-local.js';
 import { getEmbedder, cacheKey as embeddingCacheKey, compactEmbeddingCache } from './embed-google.js';
-import { getQwenEmbedder } from './embed-qwen.js';
 import { loadEnrichmentCache, applyAuxiliaryEnrichment, validateEnrichmentJsonl } from './enrichment.js';
 import { evaluateBenchmark, benchmarkPasses } from './benchmark.js';
 
@@ -42,14 +40,19 @@ function embeddingIdentity(embedding = {}) {
     model: embedding.model ?? null,
     dimensions: embedding.dimensions ?? null,
     documentTaskType: embedding.documentTaskType ?? null,
-    nativeDimensions: embedding.nativeDimensions ?? null,
-    quantization: embedding.quantization ?? null,
-    modelSha256: embedding.modelSha256 ?? null,
-    runtimeRevision: embedding.runtimeRevision ?? null,
-    pooling: embedding.pooling ?? null,
-    queryInstruction: embedding.queryInstruction ?? null,
-    normalization: embedding.normalization ?? null
+    queryTaskType: embedding.queryTaskType ?? null
   };
+}
+
+function assertGeminiProductConfig(config) {
+  const embedding = config.embedding || {};
+  if (embedding.provider !== 'google-gemini' || embedding.model !== 'gemini-embedding-001') {
+    throw new Error('This repository supports only google-gemini / gemini-embedding-001. Use openclaw-lancedb-knowledge-embedding-local for local embeddings.');
+  }
+  if (!embedding.privacyApprovedAt || !String(embedding.privacyApprovedBy || '').trim()) {
+    throw new Error('Gemini embeddings require embedding.privacyApprovedAt and embedding.privacyApprovedBy because redacted chunks leave the machine.');
+  }
+  return embedding;
 }
 
 function enrichmentState(config) {
@@ -158,30 +161,17 @@ async function rowsForChunks(config, chunks) {
     enrichment.records.get(chunk.id) || null,
     { enabled: enrichment.enabled }
   ));
-  const dims = config.embedding?.dimensions || 384;
-  let vectors;
-  let embeddingProvider = config.embedding?.provider || 'local-hash-v1';
-  if (embeddingProvider === 'google-gemini') {
-    const embedder = getEmbedder(config.embedding);
-    vectors = await embedder.embedDocuments(
-      prepared.map((c) => chunkEmbedText(c)),
-      (p) => {
-        if (p.phase === 'cache') console.error(`[embedding] cache hit ${p.cached}/${p.total}; remote ${p.missing}`);
-        if (p.phase === 'remote') console.error(`[embedding] remote embedded ${p.done}/${p.total} (+${p.batchSize})`);
-      }
-    );
-  } else if (embeddingProvider === 'qwen-local') {
-    const embedder = getQwenEmbedder(config.embedding);
-    vectors = await embedder.embedDocuments(
-      prepared.map((c) => chunkEmbedText(c)),
-      (progress) => console.error(`[embedding] local embedded ${progress.done}/${progress.total} (+${progress.batchSize})`)
-    );
-  } else if (embeddingProvider === 'local-hash-v1') {
-    embeddingProvider = 'local-hash-v1';
-    vectors = prepared.map((c) => embedLocalHash(chunkEmbedText(c), dims));
-  } else {
-    throw new Error(`Unsupported embedding provider: ${embeddingProvider}`);
-  }
+  const embedding = assertGeminiProductConfig(config);
+  const dims = embedding.dimensions || 768;
+  const embeddingProvider = embedding.provider;
+  const embedder = getEmbedder(embedding);
+  const vectors = await embedder.embedDocuments(
+    prepared.map((c) => chunkEmbedText(c)),
+    (p) => {
+      if (p.phase === 'cache') console.error(`[embedding] cache hit ${p.cached}/${p.total}; remote ${p.missing}`);
+      if (p.phase === 'remote') console.error(`[embedding] remote embedded ${p.done}/${p.total} (+${p.batchSize})`);
+    }
+  );
   return prepared.map((c, i) => ({
     ...c,
     embedding_provider: embeddingProvider,
@@ -409,11 +399,7 @@ async function commandIncremental(config) {
 }
 
 async function commandCompactCache(config) {
-  const emb = config.embedding || {};
-  if (emb.provider !== 'google-gemini') {
-    console.log(JSON.stringify({ ok: true, skipped: true, reason: `no remote embedding cache for provider ${emb.provider || 'local-hash-v1'}` }));
-    return;
-  }
+  const emb = assertGeminiProductConfig(config);
   // Recompute cache keys from the chunks current sources would produce (the content the index
   // still references), keep only those keys, and rewrite the JSONL; no embedding API calls.
   const built = buildChunks(config);
@@ -544,19 +530,9 @@ export function isRealDateSummaryRow(row) {
 }
 
 async function searchRows(config, query, { limit = 5, project = '', realDateSummaryOnly = false } = {}) {
-  const dims = config.embedding?.dimensions || 384;
-  let queryVector;
-  const embeddingProvider = config.embedding?.provider || 'local-hash-v1';
-  if (embeddingProvider === 'google-gemini') {
-    const embedder = getEmbedder(config.embedding);
-    queryVector = await embedder.embedOne(query, config.embedding?.queryTaskType || 'RETRIEVAL_QUERY');
-  } else if (embeddingProvider === 'qwen-local') {
-    queryVector = await getQwenEmbedder(config.embedding).embedOne(query);
-  } else if (embeddingProvider === 'local-hash-v1') {
-    queryVector = embedLocalHash(query, dims);
-  } else {
-    throw new Error(`Unsupported embedding provider: ${embeddingProvider}`);
-  }
+  const embedding = assertGeminiProductConfig(config);
+  const embedder = getEmbedder(embedding);
+  const queryVector = await embedder.embedOne(query, embedding.queryTaskType || 'RETRIEVAL_QUERY');
   const db = await openDb(config);
   const table = await db.openTable(config.tableName || 'knowledge_chunks');
   let search = table.search(queryVector);
@@ -658,6 +634,7 @@ async function commandBenchmark(config) {
 async function main() {
   const cmd = process.argv[2] || 'help';
   const config = loadConfig();
+  if (cmd !== 'help') assertGeminiProductConfig(config);
   if (cmd === 'scan') return commandScan(config);
   if (cmd === 'index') return commandIndex(config);
   if (cmd === 'incremental') return commandIncremental(config);

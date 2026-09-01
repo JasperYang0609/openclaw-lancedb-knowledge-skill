@@ -25,7 +25,13 @@ def make_fake_npm(bin_dir: Path, log_path: Path) -> Path:
     return npm
 
 
-def run_bootstrap(target: Path, env: dict[str, str], *extra: str) -> subprocess.CompletedProcess[str]:
+def run_bootstrap(
+    target: Path,
+    env: dict[str, str],
+    *extra: str,
+    include_approval: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    approval = ["--approved-by", "automated bootstrap fixture approval"] if include_approval else []
     return subprocess.run(
         [
             sys.executable,
@@ -34,6 +40,7 @@ def run_bootstrap(target: Path, env: dict[str, str], *extra: str) -> subprocess.
             str(target),
             "--workspace",
             str(target.parent / "workspace"),
+            *approval,
             *extra,
         ],
         cwd=ROOT,
@@ -67,6 +74,10 @@ def main() -> None:
         assert payload["install_command"] == [str(fake_npm.resolve()), "ci", "--ignore-scripts"]
         default_config = json.loads((default_target / "config/source-map.json").read_text(encoding="utf-8"))
         assert all(source.get("sourceType") != "discord_raw" for source in default_config["sources"])
+        assert default_config["embedding"]["provider"] == "google-gemini"
+        assert default_config["embedding"]["model"] == "gemini-embedding-001"
+        assert default_config["embedding"]["dimensions"] == 768
+        assert default_config["embedding"]["privacyApprovedBy"] == "automated bootstrap fixture approval"
 
         raw_target = tmp / "raw-install"
         result = run_bootstrap(
@@ -82,6 +93,7 @@ def main() -> None:
         assert len(raw_sources) == 1
         assert raw_sources[0]["include"] == ["**/raw/**/*.md"]
         assert raw_sources[0]["root"] == str((tmp / "discord-backup").resolve())
+        assert raw_config["privacy"]["discordRawApproval"] == "APPROVED_EXTERNAL"
 
         allow_log = tmp / "npm-allow.log"
         make_fake_npm(bin_dir, allow_log)
@@ -107,6 +119,70 @@ def main() -> None:
         result = run_bootstrap(tmp / "no-npm", no_npm_env, "--npm-install")
         assert result.returncode != 0
         assert "npm executable not found" in (result.stderr + result.stdout)
+
+        result = run_bootstrap(tmp / "missing-approval", env, include_approval=False)
+        assert result.returncode != 0
+        assert "--approved-by is required" in (result.stderr + result.stdout)
+
+        result = run_bootstrap(tmp / "workspace", env)
+        assert result.returncode != 0
+        assert "protected" in (result.stderr + result.stdout)
+
+        result = run_bootstrap(tmp / "home", env)
+        assert result.returncode != 0
+        assert "protected" in (result.stderr + result.stdout)
+
+        result = run_bootstrap(ROOT, env, "--overwrite")
+        assert result.returncode != 0
+        assert "repository" in (result.stderr + result.stdout)
+
+        unmanaged = tmp / "unmanaged-target"
+        (unmanaged / "src").mkdir(parents=True)
+        sentinel = unmanaged / "src" / "sentinel.txt"
+        sentinel.write_text("must survive", encoding="utf-8")
+        result = run_bootstrap(unmanaged, env, "--overwrite")
+        assert result.returncode != 0
+        assert "not a recognized managed" in (result.stderr + result.stdout)
+        assert sentinel.read_text(encoding="utf-8") == "must survive"
+
+        linked_parent = tmp / "linked-parent"
+        linked_parent.symlink_to(tmp / "real-parent", target_is_directory=True)
+        (tmp / "real-parent").mkdir()
+        result = run_bootstrap(linked_parent / "knowledge-lancedb", env)
+        assert result.returncode != 0
+        assert "symbolic links" in (result.stderr + result.stdout)
+
+        # A bootstrap-created marker authorizes a later overwrite at the exact managed target.
+        result = run_bootstrap(default_target, env, "--overwrite")
+        assert result.returncode == 0, result.stderr
+        marker = json.loads((default_target / ".openclaw-lancedb-install.json").read_text(encoding="utf-8"))
+        assert marker["product"] == "openclaw-lancedb-knowledge-gemini"
+
+        legacy_gemini = tmp / "legacy-gemini"
+        (legacy_gemini / "src").mkdir(parents=True)
+        (legacy_gemini / "config").mkdir()
+        (legacy_gemini / "package.json").write_text(json.dumps({"name": "knowledge-lancedb"}), encoding="utf-8")
+        (legacy_gemini / "src/cli.js").write_text("// legacy Gemini CLI\n", encoding="utf-8")
+        (legacy_gemini / "config/source-map.json").write_text(json.dumps({
+            "embedding": {"provider": "google-gemini", "model": "gemini-embedding-001"}
+        }), encoding="utf-8")
+        result = run_bootstrap(legacy_gemini, env, "--overwrite")
+        assert result.returncode == 0, result.stderr
+
+        local_edition = tmp / "local-edition"
+        (local_edition / "src").mkdir(parents=True)
+        (local_edition / "config").mkdir()
+        (local_edition / "package.json").write_text(json.dumps({"name": "knowledge-lancedb"}), encoding="utf-8")
+        local_sentinel = local_edition / "src/local-cli-sentinel.js"
+        local_sentinel.write_text("must survive", encoding="utf-8")
+        (local_edition / "src/cli.js").write_text("// local edition CLI\n", encoding="utf-8")
+        (local_edition / "config/source-map.json").write_text(json.dumps({
+            "embedding": {"provider": "qwen-local", "model": "Qwen3-Embedding-4B-Q5_K_M"}
+        }), encoding="utf-8")
+        result = run_bootstrap(local_edition, env, "--overwrite")
+        assert result.returncode != 0
+        assert "not a recognized managed" in (result.stderr + result.stdout)
+        assert local_sentinel.read_text(encoding="utf-8") == "must survive"
 
     print("PASS test_bootstrap_security")
 

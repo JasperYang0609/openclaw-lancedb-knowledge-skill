@@ -46,3 +46,23 @@ test('unsuffixed Gemini cache paths are dimension-scoped for safe profile isolat
 test('unknown profiles fail closed', () => {
   assert.throws(() => resolveEmbeddingProfile({ provider: 'google-gemini', profile: 'maximum-ish' }), /Unknown embedding profile/);
 });
+
+test('non-Gemini product providers fail closed and point to the local edition', () => {
+  const legacyHashProvider = ['local', 'hash', 'v1'].join('-');
+  const localModelProvider = ['qwen', 'local'].join('-');
+  assert.throws(
+    () => resolveEmbeddingProfile({ provider: legacyHashProvider }),
+    /embedding-local/
+  );
+  assert.throws(
+    () => resolveEmbeddingProfile({ provider: localModelProvider }),
+    /embedding-local/
+  );
+});
+
+test('model identity is pinned to gemini-embedding-001', () => {
+  assert.throws(
+    () => resolveEmbeddingProfile({ provider: 'google-gemini', model: 'text-embedding-newer' }),
+    /pinned to gemini-embedding-001/
+  );
+});

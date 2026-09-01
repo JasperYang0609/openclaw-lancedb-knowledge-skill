@@ -7,10 +7,15 @@
     "exactMessageIdValidation": "SKIPPED_PRIVACY_GATE"
   },
   "embedding": {
-    "provider": "local-hash-v1",
-    "model": "local-hash-v1",
+    "provider": "google-gemini",
+    "model": "gemini-embedding-001",
     "profile": "balanced",
-    "dimensions": 384,
+    "dimensions": 768,
+    "documentTaskType": "RETRIEVAL_DOCUMENT",
+    "queryTaskType": "RETRIEVAL_QUERY",
+    "batchSize": 40,
+    "throttleMs": 250,
+    "cachePath": "./data/embedding-cache/google-gemini-embedding-001-768.jsonl",
     "privacyApprovedAt": null,
     "privacyApprovedBy": null
   },

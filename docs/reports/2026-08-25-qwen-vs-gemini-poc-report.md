@@ -1,5 +1,7 @@
 # Qwen3-Embedding-4B 與 Gemini Embedding 實機對照報告
 
+> 歷史評估證據：本檔不代表此 repository 目前的產品功能。Gemini 版只支援 `gemini-embedding-001`；地端模型的現行 runtime、installer 與文件請見 [`openclaw-lancedb-knowledge-embedding-local`](https://github.com/JasperYang0609/openclaw-lancedb-knowledge-embedding-local)。
+
 日期：2026-08-25
 機器：Apple M1 Pro、16GB 統一記憶體
 結論狀態：POC 通過；Production 切換尚未放行
@@ -118,7 +120,7 @@ Q5 與 Gemini 都只漏掉同一題。兩者的差別主要是兩題的第一、
 - Q4 SHA-256：`2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b`。
 - llama.cpp revision：`f1357e49980f5462af9783164f3fdec407d90137`。
 - 完整去識別摘要：[`2026-08-25-qwen-vs-gemini-poc-summary.json`](./2026-08-25-qwen-vs-gemini-poc-summary.json)。
-- 測試設計：[`2026-08-25-qwen-gemini-embedding-poc-design.md`](../superpowers/specs/2026-08-25-qwen-gemini-embedding-poc-design.md)。
+- 測試設計：[地端版 repository 中的 POC design](https://github.com/JasperYang0609/openclaw-lancedb-knowledge-embedding-local/blob/main/docs/superpowers/specs/2026-08-25-qwen-gemini-embedding-poc-design.md)。
 - 官方來源整理：[`2026-08-25-qwen-vs-gemini-official-sources.md`](../research/2026-08-25-qwen-vs-gemini-official-sources.md)。
 - Apple Silicon 初步評估：[`2026-08-25-qwen3-embedding-4b-apple-silicon-evaluation.md`](../research/2026-08-25-qwen3-embedding-4b-apple-silicon-evaluation.md)。
 

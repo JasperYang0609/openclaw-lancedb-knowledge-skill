@@ -39,6 +39,20 @@ export function l2Normalize(vector) {
   return vector.map((v) => v / norm);
 }
 
+export function validateEmbeddingVector(vector, dimensions, label = 'Embedding') {
+  if (!Array.isArray(vector) || vector.length !== dimensions) {
+    throw new Error(`${label} dimension mismatch: got ${vector?.length}; expected ${dimensions}`);
+  }
+  if (!vector.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    throw new Error(`${label} must contain only finite numeric values`);
+  }
+  const normSquared = vector.reduce((sum, value) => sum + value * value, 0);
+  if (!Number.isFinite(normSquared) || normSquared <= 0) {
+    throw new Error(`${label} must have a finite non-zero norm`);
+  }
+  return vector;
+}
+
 export class EmbeddingCache {
   constructor(cachePath) {
     this.cachePath = path.resolve(cachePath || './data/embedding-cache/google-gemini.jsonl');
@@ -95,11 +109,12 @@ export function compactEmbeddingCache({ cachePath, keepKeys, keepQueryMeta = nul
   return { ok: true, cachePath: resolved, before: parsed, kept: kept.size, keptQueryRows, removed: parsed - kept.size, bytesBefore, bytesAfter };
 }
 
-async function postJsonWithRetry(url, body, { maxRetries = 6 } = {}) {
+async function postJsonWithRetry(url, body, { maxRetries = 6, apiKey } = {}) {
+  if (!apiKey) throw new Error('Google API key is required');
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const r = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify(body)
     });
     const text = await r.text();
@@ -140,11 +155,11 @@ export class GoogleGeminiEmbedder {
   async embedOne(text, taskType = this.queryTaskType) {
     const key = cacheKey({ text, model: this.model, dimensions: this.dimensions, taskType });
     const cached = this.cache.get(key);
-    if (cached) return l2Normalize(cached);
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:embedContent?key=${encodeURIComponent(this.apiKey)}`;
-    const data = await postJsonWithRetry(url, this.makeRequest(text, taskType));
+    if (cached) return l2Normalize(validateEmbeddingVector(cached, this.dimensions, 'Cached Gemini embedding'));
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:embedContent`;
+    const data = await postJsonWithRetry(url, this.makeRequest(text, taskType), { apiKey: this.apiKey });
     const vector = data.embedding?.values;
-    if (!Array.isArray(vector) || vector.length !== this.dimensions) throw new Error(`Unexpected embedding dimension: ${vector?.length}`);
+    validateEmbeddingVector(vector, this.dimensions, 'Gemini API embedding');
     this.cache.append(key, vector, { model: this.model, dimensions: this.dimensions, taskType });
     return l2Normalize(vector);
   }
@@ -156,21 +171,21 @@ export class GoogleGeminiEmbedder {
     for (let i = 0; i < texts.length; i++) {
       const key = cacheKey({ text: texts[i], model: this.model, dimensions: this.dimensions, taskType });
       const cached = this.cache.get(key);
-      if (cached) out[i] = l2Normalize(cached);
+      if (cached) out[i] = l2Normalize(validateEmbeddingVector(cached, this.dimensions, 'Cached Gemini embedding'));
       else missing.push({ i, key, text: texts[i] });
     }
     onProgress({ phase: 'cache', total: texts.length, cached: texts.length - missing.length, missing: missing.length });
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:batchEmbedContents?key=${encodeURIComponent(this.apiKey)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:batchEmbedContents`;
     let done = texts.length - missing.length;
     for (let start = 0; start < missing.length; start += this.batchSize) {
       const batch = missing.slice(start, start + this.batchSize);
       const body = { requests: batch.map((x) => this.makeRequest(x.text, taskType)) };
-      const data = await postJsonWithRetry(url, body);
+      const data = await postJsonWithRetry(url, body, { apiKey: this.apiKey });
       const embeddings = data.embeddings || [];
       if (embeddings.length !== batch.length) throw new Error(`Batch embedding count mismatch: got ${embeddings.length}, expected ${batch.length}`);
       embeddings.forEach((emb, j) => {
         const vector = emb.values;
-        if (!Array.isArray(vector) || vector.length !== this.dimensions) throw new Error(`Unexpected embedding dimension in batch: ${vector?.length}`);
+        validateEmbeddingVector(vector, this.dimensions, 'Gemini API embedding');
         const item = batch[j];
         out[item.i] = l2Normalize(vector);
         this.cache.append(item.key, vector, { model: this.model, dimensions: this.dimensions, taskType });

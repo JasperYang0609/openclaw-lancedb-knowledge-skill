@@ -22,8 +22,7 @@ Create a local semantic retrieval layer for OpenClaw so old decisions, project p
 - Primary command: `node src/cli.js`
 - Commands: `scan`, `index`, `incremental`, `sync-state`, `status`, `audit`, `search`, `compact-cache`, `prepare-enrichment`, `validate-enrichment`, `benchmark`, `profile`
 - Default source types: `memory`, `backup_summary`, `project_doc`, `ops_doc`; `discord_raw` is an explicit opt-in
-- Production embedding used by Ansai after Jasper approval: Google Gemini `gemini-embedding-001`, 768 dimensions
-- Safe default for new clients: `local-hash-v1`, 384 dimensions, no external API calls
+- Product embedding: Google Gemini `gemini-embedding-001`, 768 dimensions after explicit privacy approval
 
 ## Data flow
 
@@ -54,15 +53,11 @@ Each chunk row stores:
 - `embedding_provider`, `embedding_model`, `embedding_dimensions`
 - `vector`
 
-## Embedding modes
+## Embedding provider
 
-### local-hash-v1
+### google-gemini / gemini-embedding-001
 
-Use for proof-of-concept, private data, and installs before approval. It is deterministic and offline, but retrieval quality is weaker than production embeddings.
-
-### google-gemini
-
-Use after explicit privacy approval. It supports multilingual retrieval better and matches the Ansai formal setup:
+This is the only product provider in this repository. Use it after explicit privacy approval. It supports multilingual retrieval and matches the Ansai formal setup:
 
 ```json
 {

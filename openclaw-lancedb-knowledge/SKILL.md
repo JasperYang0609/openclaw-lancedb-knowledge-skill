@@ -1,11 +1,13 @@
 ---
 name: openclaw-lancedb-knowledge
-description: Build, operate, troubleshoot, or replicate Jasper/Ansai-style OpenClaw knowledge search using local LanceDB, Markdown source maps, secret redaction, incremental indexing, Google Gemini or local-hash embeddings, and source-cited retrieval for project memory, Discord/channel backup summaries, Obsidian-style vaults, handoff files, and client documentation. Use when asked to install or create an OpenClaw LanceDB knowledge base, search historical project context, index OpenClaw memory/backups, configure embeddings, run incremental indexing/cron, or package this workflow for a client.
+description: Build, operate, troubleshoot, or replicate Jasper/Ansai-style OpenClaw knowledge search using local LanceDB, Markdown source maps, secret redaction, incremental indexing, Google Gemini gemini-embedding-001, and source-cited retrieval for project memory, Discord/channel backup summaries, Obsidian-style vaults, handoff files, and client documentation. Use when asked to install or create the Gemini cloud-embedding edition of an OpenClaw LanceDB knowledge base, search historical project context, index OpenClaw memory/backups, configure embeddings, run incremental indexing/cron, or package this workflow for a client.
 ---
 
 # OpenClaw LanceDB Knowledge
 
 Use this skill to create and operate an OpenClaw-first semantic knowledge layer. Write and preserve instructions so they are readable by general LLM agents, especially Claude Opus-class client agents, not only by this specific OpenClaw instance: use plain imperative steps, explicit paths/commands, minimal local jargon, and source-cited output rules.
+
+This repository is the Gemini cloud-embedding edition and supports only `google-gemini` / `gemini-embedding-001`. For an offline local-model edition, use <https://github.com/JasperYang0609/openclaw-lancedb-knowledge-embedding-local>.
 
 ```
 OpenClaw memory / backup summaries / project docs / Obsidian-style markdown
@@ -55,6 +57,7 @@ python3 scripts/bootstrap_openclaw_lancedb.py \
   --backup-root "$HOME/Desktop/<伺服器名稱>備份/頻道紀錄" \
   --project-root "$HOME/Desktop/Client_Project" \
   --project-name ClientProject \
+  --approved-by "Client approved Google embeddings on YYYY-MM-DD" \
   --include-discord-raw \
   --npm-install
 ```
@@ -63,17 +66,7 @@ Omit `--include-discord-raw` when summaries are sufficient. Raw Discord indexing
 
 `--npm-install` uses a fixed `npm ci --ignore-scripts` command and never invokes a shell. Only add `--allow-package-scripts` after reviewing the lockfile and dependency lifecycle scripts; that flag requires `--npm-install`. Run `npm test` explicitly before `npm run postrun:check` because the post-run check is intentionally non-executing.
 
-Use local-only embeddings by default. To enable Google Gemini embeddings:
-
-```bash
-python3 scripts/bootstrap_openclaw_lancedb.py \
-  --google-gemini \
-  --embedding-profile balanced \
-  --approved-by "Client approved external embeddings on YYYY-MM-DD" \
-  --overwrite
-```
-
-For an opt-in 3072-dimensional rebuild, use `--embedding-profile high-quality`. Do not switch an existing index in place: back it up, update config, run a full `npm run index`, then pass the benchmark gate.
+The approval note is mandatory because redacted chunks leave the machine for Google Gemini. For an opt-in 3072-dimensional rebuild, use `--embedding-profile high-quality`. Do not switch an existing index in place: back it up, update config, run a full `npm run index`, then pass the benchmark gate.
 
 ## Commands after bootstrap
 
