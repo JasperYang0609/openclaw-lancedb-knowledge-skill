@@ -158,6 +158,32 @@ def main() -> None:
         marker = json.loads((default_target / ".openclaw-lancedb-install.json").read_text(encoding="utf-8"))
         assert marker["product"] == "openclaw-lancedb-knowledge-gemini"
 
+        legacy_gemini = tmp / "legacy-gemini"
+        (legacy_gemini / "src").mkdir(parents=True)
+        (legacy_gemini / "config").mkdir()
+        (legacy_gemini / "package.json").write_text(json.dumps({"name": "knowledge-lancedb"}), encoding="utf-8")
+        (legacy_gemini / "src/cli.js").write_text("// legacy Gemini CLI\n", encoding="utf-8")
+        (legacy_gemini / "config/source-map.json").write_text(json.dumps({
+            "embedding": {"provider": "google-gemini", "model": "gemini-embedding-001"}
+        }), encoding="utf-8")
+        result = run_bootstrap(legacy_gemini, env, "--overwrite")
+        assert result.returncode == 0, result.stderr
+
+        local_edition = tmp / "local-edition"
+        (local_edition / "src").mkdir(parents=True)
+        (local_edition / "config").mkdir()
+        (local_edition / "package.json").write_text(json.dumps({"name": "knowledge-lancedb"}), encoding="utf-8")
+        local_sentinel = local_edition / "src/local-cli-sentinel.js"
+        local_sentinel.write_text("must survive", encoding="utf-8")
+        (local_edition / "src/cli.js").write_text("// local edition CLI\n", encoding="utf-8")
+        (local_edition / "config/source-map.json").write_text(json.dumps({
+            "embedding": {"provider": "qwen-local", "model": "Qwen3-Embedding-4B-Q5_K_M"}
+        }), encoding="utf-8")
+        result = run_bootstrap(local_edition, env, "--overwrite")
+        assert result.returncode != 0
+        assert "not a recognized managed" in (result.stderr + result.stdout)
+        assert local_sentinel.read_text(encoding="utf-8") == "must survive"
+
     print("PASS test_bootstrap_security")
 
 

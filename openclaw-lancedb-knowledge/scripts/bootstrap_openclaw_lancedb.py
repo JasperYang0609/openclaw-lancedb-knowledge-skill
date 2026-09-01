@@ -34,7 +34,14 @@ def _is_managed_target(target: Path) -> bool:
     if not all(_is_regular_file(path) for path in (package, cli, source_map)):
         return False
     try:
-        return json.loads(package.read_text(encoding="utf-8")).get("name") == "knowledge-lancedb"
+        package_payload = json.loads(package.read_text(encoding="utf-8"))
+        source_payload = json.loads(source_map.read_text(encoding="utf-8"))
+        embedding = source_payload.get("embedding", {})
+        return (
+            package_payload.get("name") == "knowledge-lancedb"
+            and embedding.get("provider") == "google-gemini"
+            and embedding.get("model") == "gemini-embedding-001"
+        )
     except (OSError, json.JSONDecodeError):
         return False
 
