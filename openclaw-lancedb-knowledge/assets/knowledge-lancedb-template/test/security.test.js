@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { redactSecrets } from '../src/security.js';
-import { embedLocalHash } from '../src/embed-local.js';
 
 test('redacts common secret-like tokens before embedding/indexing', () => {
   const notionLike = 'ntn_' + 'abcdefghijklmnopqrstuvwxyz123456';
@@ -42,13 +41,4 @@ test('redacts extended provider tokens and credentials', () => {
 test('does not redact plain urls without embedded credentials', () => {
   const out = redactSecrets('see https://example.com/docs and http://localhost:3000/health');
   assert.doesNotMatch(out.text, /REDACTED_URL_BASIC_AUTH/);
-});
-
-test('local hash embedding has stable normalized dimension', () => {
-  const v1 = embedLocalHash('VASO 文件中心 簽收', 384);
-  const v2 = embedLocalHash('VASO 文件中心 簽收', 384);
-  assert.equal(v1.length, 384);
-  assert.deepEqual(v1, v2);
-  const norm = Math.sqrt(v1.reduce((a, b) => a + b * b, 0));
-  assert.ok(Math.abs(norm - 1) < 1e-9);
 });

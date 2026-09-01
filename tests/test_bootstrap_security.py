@@ -25,7 +25,13 @@ def make_fake_npm(bin_dir: Path, log_path: Path) -> Path:
     return npm
 
 
-def run_bootstrap(target: Path, env: dict[str, str], *extra: str) -> subprocess.CompletedProcess[str]:
+def run_bootstrap(
+    target: Path,
+    env: dict[str, str],
+    *extra: str,
+    include_approval: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    approval = ["--approved-by", "automated bootstrap fixture approval"] if include_approval else []
     return subprocess.run(
         [
             sys.executable,
@@ -34,6 +40,7 @@ def run_bootstrap(target: Path, env: dict[str, str], *extra: str) -> subprocess.
             str(target),
             "--workspace",
             str(target.parent / "workspace"),
+            *approval,
             *extra,
         ],
         cwd=ROOT,
@@ -67,6 +74,10 @@ def main() -> None:
         assert payload["install_command"] == [str(fake_npm.resolve()), "ci", "--ignore-scripts"]
         default_config = json.loads((default_target / "config/source-map.json").read_text(encoding="utf-8"))
         assert all(source.get("sourceType") != "discord_raw" for source in default_config["sources"])
+        assert default_config["embedding"]["provider"] == "google-gemini"
+        assert default_config["embedding"]["model"] == "gemini-embedding-001"
+        assert default_config["embedding"]["dimensions"] == 768
+        assert default_config["embedding"]["privacyApprovedBy"] == "automated bootstrap fixture approval"
 
         raw_target = tmp / "raw-install"
         result = run_bootstrap(
@@ -82,6 +93,7 @@ def main() -> None:
         assert len(raw_sources) == 1
         assert raw_sources[0]["include"] == ["**/raw/**/*.md"]
         assert raw_sources[0]["root"] == str((tmp / "discord-backup").resolve())
+        assert raw_config["privacy"]["discordRawApproval"] == "APPROVED_EXTERNAL"
 
         allow_log = tmp / "npm-allow.log"
         make_fake_npm(bin_dir, allow_log)
@@ -107,6 +119,10 @@ def main() -> None:
         result = run_bootstrap(tmp / "no-npm", no_npm_env, "--npm-install")
         assert result.returncode != 0
         assert "npm executable not found" in (result.stderr + result.stdout)
+
+        result = run_bootstrap(tmp / "missing-approval", env, include_approval=False)
+        assert result.returncode != 0
+        assert "--approved-by is required" in (result.stderr + result.stdout)
 
     print("PASS test_bootstrap_security")
 

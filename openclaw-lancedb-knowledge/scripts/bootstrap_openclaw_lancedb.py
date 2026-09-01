@@ -62,9 +62,9 @@ def main() -> int:
     parser.add_argument("--include-discord-raw", action="store_true", help="Also index **/raw/**/*.md as sourceType=discord_raw; review privacy and corpus size first")
     parser.add_argument("--project-root", default="", help="Client/project docs root to index")
     parser.add_argument("--project-name", default="ClientProject", help="Project label stored in LanceDB rows")
-    parser.add_argument("--google-gemini", action="store_true", help="Use Google Gemini embeddings instead of local hash embeddings")
+    parser.add_argument("--google-gemini", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--embedding-profile", choices=["balanced", "high-quality"], default="balanced", help="Balanced uses 768 Gemini dimensions; high-quality uses 3072 and requires a full rebuild")
-    parser.add_argument("--approved-by", default="", help="Required note when enabling external embeddings")
+    parser.add_argument("--approved-by", default="", help="Required approval note for sending redacted chunks to Google Gemini")
     parser.add_argument("--npm-install", action="store_true", help="Run npm ci --ignore-scripts after copying files")
     parser.add_argument("--allow-package-scripts", action="store_true", help="Explicitly allow npm lifecycle scripts; requires --npm-install and dependency review")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing template files in target")
@@ -82,10 +82,8 @@ def main() -> int:
     backup_root = Path(args.backup_root).expanduser().resolve() if args.backup_root else Path("__DISCORD_BACKUP_ROOT__")
     project_root = Path(args.project_root).expanduser().resolve() if args.project_root else Path("__PROJECT_DOC_ROOT__")
 
-    if args.google_gemini and not args.approved_by:
-        raise SystemExit("--approved-by is required with --google-gemini because private chunks leave the machine for embedding.")
-    if args.embedding_profile == "high-quality" and not args.google_gemini:
-        raise SystemExit("--embedding-profile high-quality currently requires --google-gemini.")
+    if not args.approved_by.strip():
+        raise SystemExit("--approved-by is required because this Gemini edition sends redacted chunks to Google for embedding.")
 
     copytree(template, target, args.overwrite)
     (target / "data").mkdir(exist_ok=True)
@@ -116,7 +114,7 @@ def main() -> int:
             "priority": 1,
         })
         cfg["privacy"] = {
-            "discordRawApproval": "APPROVED_EXTERNAL" if args.google_gemini else "LOCAL_ONLY",
+            "discordRawApproval": "APPROVED_EXTERNAL",
             "exactMessageIdValidation": "REQUIRED",
         }
     else:
@@ -125,23 +123,22 @@ def main() -> int:
             "exactMessageIdValidation": "SKIPPED_PRIVACY_GATE",
         }
 
-    if args.google_gemini:
-        dimensions = 3072 if args.embedding_profile == "high-quality" else 768
-        cfg["embedding"] = {
-            "provider": "google-gemini",
-            "model": "gemini-embedding-001",
-            "profile": args.embedding_profile,
-            "dimensions": dimensions,
-            "documentTaskType": "RETRIEVAL_DOCUMENT",
-            "queryTaskType": "RETRIEVAL_QUERY",
-            "batchSize": 40,
-            "throttleMs": 250,
-            "cachePath": f"./data/embedding-cache/google-gemini-embedding-001-{dimensions}.jsonl",
-            "privacyApprovedAt": datetime.now(timezone.utc).isoformat(),
-            "privacyApprovedBy": args.approved_by,
-        }
-        if args.embedding_profile == "high-quality":
-            cfg["chunking"] = {"maxChars": 2800, "overlapChars": 350}
+    dimensions = 3072 if args.embedding_profile == "high-quality" else 768
+    cfg["embedding"] = {
+        "provider": "google-gemini",
+        "model": "gemini-embedding-001",
+        "profile": args.embedding_profile,
+        "dimensions": dimensions,
+        "documentTaskType": "RETRIEVAL_DOCUMENT",
+        "queryTaskType": "RETRIEVAL_QUERY",
+        "batchSize": 40,
+        "throttleMs": 250,
+        "cachePath": f"./data/embedding-cache/google-gemini-embedding-001-{dimensions}.jsonl",
+        "privacyApprovedAt": datetime.now(timezone.utc).isoformat(),
+        "privacyApprovedBy": args.approved_by.strip(),
+    }
+    if args.embedding_profile == "high-quality":
+        cfg["chunking"] = {"maxChars": 2800, "overlapChars": 350}
 
     (target / "config" / "source-map.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
 

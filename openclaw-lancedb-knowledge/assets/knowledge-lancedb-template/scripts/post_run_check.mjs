@@ -30,6 +30,8 @@ record("core scripts present", ["scan", "index", "search", "status", "test", "in
 
 const sourceMap = await readJson("config/source-map.example.json");
 record("source map has sources", Array.isArray(sourceMap.sources) && sourceMap.sources.length > 0);
+record("Gemini edition provider is pinned", sourceMap.embedding?.provider === "google-gemini" && sourceMap.embedding?.model === "gemini-embedding-001" && sourceMap.embedding?.dimensions === 768);
+record("Gemini approval placeholders are explicit", sourceMap.embedding?.privacyApprovedAt === null && sourceMap.embedding?.privacyApprovedBy === null);
 record("source map excludes common secret paths", JSON.stringify(sourceMap).includes("secret") && JSON.stringify(sourceMap).includes(".env"));
 record("AI enrichment is opt-in", sourceMap.enrichment?.enabled === false);
 record("Discord raw is opt-in", !sourceMap.sources.some((source) => source.sourceType === "discord_raw"));
@@ -37,6 +39,11 @@ record("Discord raw privacy gate is explicit", sourceMap.privacy?.discordRawAppr
 record("synthetic summary indexes are excluded", JSON.stringify(sourceMap).includes("_inventory-index"));
 record("snapshot tool exists", await exists("scripts/snapshot_knowledge_assets.py"));
 record("cron tooling audit exists", await exists("scripts/audit_cron_tooling.py"));
+const shadowCommand = ["shadow", "index"].join(":");
+const legacyEmbedder = ["src/embed", "local.js"].join("-");
+const localModelEmbedder = ["src/embed", "qwen.js"].join("-");
+const shadowEntry = ["src/shadow", "index.js"].join("-");
+record("local and shadow product commands are absent", !pkg.scripts?.[shadowCommand] && !await exists(legacyEmbedder) && !await exists(localModelEmbedder) && !await exists(shadowEntry));
 
 const benchmark = await readJson("config/benchmark.example.json");
 record("release benchmark scaffold has at least 20 cases", Array.isArray(benchmark.cases) && benchmark.cases.length >= 20);

@@ -5,13 +5,60 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as lancedb from '@lancedb/lancedb';
+import { buildChunks } from '../src/sources.js';
+import { cacheKey } from '../src/embed-google.js';
 
 const cli = path.resolve('src/cli.js');
 
 function run(cwd, args) {
-  const result = spawnSync(process.execPath, [cli, ...args], { cwd, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [cli, ...args], {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, GOOGLE_API_KEY: 'integration-test-dummy-key' }
+  });
   assert.equal(result.status, 0, `${args.join(' ')} failed:\n${result.stderr}\n${result.stdout}`);
   return result.stdout;
+}
+
+function chunkEmbedText(chunk) {
+  return `${chunk.project}\n${chunk.title}\n${chunk.heading}\n${chunk.chunk_text}`;
+}
+
+function seedGeminiCache(root, config, query) {
+  const embedding = config.embedding;
+  const rows = buildChunks(config).chunks.map((chunk, index) => {
+    const vector = Array(embedding.dimensions).fill(0);
+    vector[chunk.title === 'Release decision' ? 0 : ((index + 1) % embedding.dimensions)] = 1;
+    return {
+      key: cacheKey({
+        text: chunkEmbedText(chunk),
+        model: embedding.model,
+        dimensions: embedding.dimensions,
+        taskType: embedding.documentTaskType
+      }),
+      vector,
+      model: embedding.model,
+      dimensions: embedding.dimensions,
+      taskType: embedding.documentTaskType
+    };
+  });
+  const queryVector = Array(embedding.dimensions).fill(0);
+  queryVector[0] = 1;
+  rows.push({
+    key: cacheKey({
+      text: query,
+      model: embedding.model,
+      dimensions: embedding.dimensions,
+      taskType: embedding.queryTaskType
+    }),
+    vector: queryVector,
+    model: embedding.model,
+    dimensions: embedding.dimensions,
+    taskType: embedding.queryTaskType
+  });
+  const cachePath = path.join(root, embedding.cachePath);
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+  fs.writeFileSync(cachePath, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
 }
 
 test('CLI indexes deterministic metadata, validates optional enrichment, and passes a 20-case benchmark', async () => {
@@ -26,12 +73,24 @@ test('CLI indexes deterministic metadata, validates optional enrichment, and pas
     version: 1,
     dbPath: './data/lancedb',
     tableName: 'knowledge_chunks',
-    embedding: { provider: 'local-hash-v1', model: 'local-hash-v1', dimensions: 64 },
+    embedding: {
+      provider: 'google-gemini',
+      model: 'gemini-embedding-001',
+      profile: 'custom',
+      dimensions: 64,
+      documentTaskType: 'RETRIEVAL_DOCUMENT',
+      queryTaskType: 'RETRIEVAL_QUERY',
+      cachePath: './data/embedding-cache/gemini-fixture-64.jsonl',
+      privacyApprovedAt: '2026-09-01T00:00:00Z',
+      privacyApprovedBy: 'integration test fixture'
+    },
     chunking: { maxChars: 500, overlapChars: 0 },
     enrichment: { enabled: false, inputPath: './data/enrichment/validated.jsonl', minConfidence: 0.75 },
     sources: [{ id: 'fixture', project: 'FixtureProject', sourceType: 'project_doc', root: docs, include: ['**/*.md'], exclude: [] }]
   };
   fs.writeFileSync(path.join(root, 'config/source-map.json'), JSON.stringify(config, null, 2));
+  const benchmarkQuery = 'stable launch plan release verification decision';
+  seedGeminiCache(root, config, benchmarkQuery);
 
   run(root, ['index']);
   const status = JSON.parse(run(root, ['status']));
@@ -93,7 +152,7 @@ test('CLI indexes deterministic metadata, validates optional enrichment, and pas
     minMrr: 1,
     cases: Array.from({ length: 20 }, (_, i) => ({
       id: `release-${i + 1}`,
-      query: 'stable launch plan release verification decision',
+      query: benchmarkQuery,
       expected: { project: 'FixtureProject', sourcePathIncludes: 'decision.md' }
     }))
   };
@@ -123,7 +182,10 @@ test('sync-state refuses to stamp a legacy table as schema v2', async () => {
     version: 1,
     dbPath: './data/lancedb',
     tableName: 'knowledge_chunks',
-    embedding: { provider: 'local-hash-v1', model: 'local-hash-v1', dimensions: 8 },
+    embedding: {
+      provider: 'google-gemini', model: 'gemini-embedding-001', profile: 'custom', dimensions: 8,
+      privacyApprovedAt: '2026-09-01T00:00:00Z', privacyApprovedBy: 'integration test fixture'
+    },
     enrichment: { enabled: false },
     sources: [{ id: 'fixture', project: 'Fixture', sourceType: 'project_doc', root: docs, include: ['**/*.md'], exclude: [] }]
   };
@@ -138,4 +200,23 @@ test('sync-state refuses to stamp a legacy table as schema v2', async () => {
   assert.notEqual(result.status, 0, `sync-state unexpectedly succeeded:\n${result.stdout}`);
   assert.match(`${result.stderr}\n${result.stdout}`, /schema v2|full index|legacy/i);
   assert.equal(fs.existsSync(path.join(root, 'data/index-state.json')), false);
+});
+
+test('CLI refuses Gemini use without an explicit external-embedding approval record', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-missing-approval-'));
+  fs.mkdirSync(path.join(root, 'config'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'config/source-map.json'), JSON.stringify({
+    version: 1,
+    dbPath: './data/lancedb',
+    tableName: 'knowledge_chunks',
+    embedding: { provider: 'google-gemini', model: 'gemini-embedding-001', dimensions: 768 },
+    sources: []
+  }, null, 2));
+  const result = spawnSync(process.execPath, [cli, 'status'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, GOOGLE_API_KEY: 'integration-test-dummy-key' }
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stderr}\n${result.stdout}`, /privacyApprovedAt|privacyApprovedBy/);
 });
