@@ -1,7 +1,7 @@
 # Gemini Embedding 冷備援切換設計
 
 日期：2026-09-08  
-狀態：待 Jasper 書面審閱  
+狀態：已核准；2026-09-09 依 A 方案補充小型查詢快取與安全增量替換
 適用環境：目前這台 Apple Silicon Mac／OpenClaw
 
 ## 目標
@@ -96,3 +96,5 @@
 本次「前置作業完成」定義為：程式、測試、Keychain 工具、disabled 排程候選、Qwen 冷備援收據與回滾程序均已提交並驗證，系統停在 Jasper 的 API Key 輸入 Gate，Qwen 仍提供正式搜尋。
 
 本次「切換完成」定義為：新 Key canary、Gemini 全量重建、搜尋品質、增量、快照與還原全部通過；Gemini 排程啟用，Qwen 服務與 managed jobs 停止，但所有 Qwen 資產仍完整保留。
+
+補充設計與驗證清單：`2026-09-09-gemini-small-query-cache-atomic-incremental-design.md`。
