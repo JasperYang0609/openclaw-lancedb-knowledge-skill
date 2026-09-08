@@ -36,6 +36,7 @@ https://github.com/JasperYang0609/openclaw-lancedb-knowledge-skill/raw/main/dist
 - Explicit Discord raw privacy states and real-date summary validation that rejects synthetic inventory indexes
 - Cron preflight that rejects legacy `payload.toolsAllow`, requires `--clear-tools`, and verifies GPT/Codex shell access with a temporary isolated canary
 - Supply-chain-safe bootstrap: fixed `npm ci --ignore-scripts` by default, explicit lifecycle-script opt-in, and a non-executing post-run checker
+- Dedicated Gemini key storage in macOS Keychain, with a hidden native prompt and no fallback to general OpenClaw provider credentials
 
 ## Quality and safety defaults
 
@@ -52,6 +53,25 @@ python3 openclaw-lancedb-knowledge/scripts/bootstrap_openclaw_lancedb.py \
   --workspace ~/.openclaw/workspace \
   --approved-by "Client approved Google embeddings on YYYY-MM-DD"
 ```
+
+On macOS, store the dedicated embedding key through the native hidden prompt. Never paste the key into chat or put it on a command line:
+
+```bash
+cd ~/.openclaw/workspace/knowledge-lancedb
+python3 scripts/gemini_embedding_keychain.py store
+python3 scripts/gemini_embedding_keychain.py check
+python3 scripts/gemini_embedding_keychain.py canary
+```
+
+The Keychain item uses a fixed service/account identity. Indexing and search receive the secret only in child-process memory:
+
+```bash
+python3 scripts/gemini_embedding_keychain.py run -- index
+python3 scripts/gemini_embedding_keychain.py run -- search "project status" --limit 5
+python3 scripts/gemini_embedding_keychain.py run -- incremental
+```
+
+The wrapper intentionally does not read a general Google key from OpenClaw configuration. Missing or malformed dedicated credentials fail closed.
 
 ## Maintainer use of Codex
 

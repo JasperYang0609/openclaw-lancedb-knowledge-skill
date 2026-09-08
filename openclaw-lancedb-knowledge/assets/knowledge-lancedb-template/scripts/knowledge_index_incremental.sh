@@ -42,7 +42,7 @@ rotate_reports() {
 
 {
   echo "[knowledge-index] started_at=$(date +%Y-%m-%dT%H:%M:%S%z)"
-  npm run incremental
+  python3 scripts/gemini_embedding_keychain.py run -- incremental
   compact_cache_if_oversized || true
   rotate_reports || true
   echo "[knowledge-index] finished_at=$(date +%Y-%m-%dT%H:%M:%S%z)"

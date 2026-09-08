@@ -36,6 +36,7 @@ EXPECTED_TEMPLATE_SRC = {
 
 EXPECTED_TEMPLATE_SCRIPTS = {
     "audit_cron_tooling.py",
+    "gemini_embedding_keychain.py",
     "knowledge_index_incremental.sh",
     "knowledge_search.sh",
     "post_run_check.mjs",

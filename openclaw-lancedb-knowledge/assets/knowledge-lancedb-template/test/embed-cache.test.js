@@ -7,11 +7,18 @@ import {
   cacheKey,
   compactEmbeddingCache,
   GoogleGeminiEmbedder,
+  resolveGoogleApiKey,
   validateEmbeddingVector
 } from '../src/embed-google.js';
 
 const MODEL = 'gemini-embedding-001';
 const DIMS = 8;
+const KEY_SOURCE = 'com.ansai.openclaw.gemini-embedding';
+
+function setDedicatedTestKey(value) {
+  process.env.GOOGLE_API_KEY = value;
+  process.env.OPENCLAW_GEMINI_KEY_SOURCE = KEY_SOURCE;
+}
 
 function makeRow({ text, taskType, model = MODEL, dimensions = DIMS }) {
   const key = cacheKey({ text, model, dimensions, taskType });
@@ -78,21 +85,25 @@ test('Gemini cache rejects non-numeric vectors even when the cache key is valid'
     taskType: 'RETRIEVAL_QUERY'
   }) + '\n');
   const previousKey = process.env.GOOGLE_API_KEY;
-  process.env.GOOGLE_API_KEY = 'test-only-dummy-key';
+  const previousSource = process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+  setDedicatedTestKey('test-only-dummy-key');
   try {
     const embedder = new GoogleGeminiEmbedder({ model: MODEL, dimensions: DIMS, cachePath });
     await assert.rejects(embedder.embedOne(text), /finite numeric values/);
   } finally {
     if (previousKey === undefined) delete process.env.GOOGLE_API_KEY;
     else process.env.GOOGLE_API_KEY = previousKey;
+    if (previousSource === undefined) delete process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+    else process.env.OPENCLAW_GEMINI_KEY_SOURCE = previousSource;
   }
 });
 
 test('Gemini API key is sent in a header, never in the request URL', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'embed-header-test-'));
   const previousKey = process.env.GOOGLE_API_KEY;
+  const previousSource = process.env.OPENCLAW_GEMINI_KEY_SOURCE;
   const previousFetch = globalThis.fetch;
-  process.env.GOOGLE_API_KEY = 'test-only-header-key';
+  setDedicatedTestKey('test-only-header-key');
   globalThis.fetch = async (url, options) => {
     assert.doesNotMatch(String(url), /key=/i);
     assert.equal(options.headers['x-goog-api-key'], 'test-only-header-key');
@@ -109,6 +120,45 @@ test('Gemini API key is sent in a header, never in the request URL', async () =>
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.GOOGLE_API_KEY;
     else process.env.GOOGLE_API_KEY = previousKey;
+    if (previousSource === undefined) delete process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+    else process.env.OPENCLAW_GEMINI_KEY_SOURCE = previousSource;
+  }
+});
+
+test('Gemini key resolution fails closed without dedicated environment input', () => {
+  const previousGoogle = process.env.GOOGLE_API_KEY;
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousSource = process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+  delete process.env.GOOGLE_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+  try {
+    assert.throws(
+      () => resolveGoogleApiKey(),
+      /provider-config and inherited-environment fallback are disabled/
+    );
+  } finally {
+    if (previousGoogle === undefined) delete process.env.GOOGLE_API_KEY;
+    else process.env.GOOGLE_API_KEY = previousGoogle;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousSource === undefined) delete process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+    else process.env.OPENCLAW_GEMINI_KEY_SOURCE = previousSource;
+  }
+});
+
+test('inherited Google environment key is rejected without the dedicated source marker', () => {
+  const previousGoogle = process.env.GOOGLE_API_KEY;
+  const previousSource = process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+  process.env.GOOGLE_API_KEY = 'general-provider-key-must-not-be-used';
+  delete process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+  try {
+    assert.throws(() => resolveGoogleApiKey(), /source marker is missing/);
+  } finally {
+    if (previousGoogle === undefined) delete process.env.GOOGLE_API_KEY;
+    else process.env.GOOGLE_API_KEY = previousGoogle;
+    if (previousSource === undefined) delete process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+    else process.env.OPENCLAW_GEMINI_KEY_SOURCE = previousSource;
   }
 });
 

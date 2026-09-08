@@ -6,23 +6,14 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function ensureDir(p) { fs.mkdirSync(p, { recursive: true }); }
 function sha256(text) { return crypto.createHash('sha256').update(text).digest('hex'); }
 
+const DEDICATED_KEY_SOURCE = 'com.ansai.openclaw.gemini-embedding';
+
 export function resolveGoogleApiKey() {
-  if (process.env.GOOGLE_API_KEY) return process.env.GOOGLE_API_KEY;
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
-  const candidates = [
-    process.env.OPENCLAW_CONFIG_PATH,
-    path.join(process.env.HOME || '', '.openclaw', 'openclaw.json'),
-    path.join(process.env.HOME || '', '.openclaw', 'config.json')
-  ].filter(Boolean);
-  for (const cfgPath of candidates) {
-    if (!fs.existsSync(cfgPath)) continue;
-    try {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      const key = cfg.models?.providers?.google?.apiKey || cfg.providers?.google?.apiKey;
-      if (key) return key;
-    } catch {}
+  if (process.env.OPENCLAW_GEMINI_KEY_SOURCE !== DEDICATED_KEY_SOURCE) {
+    throw new Error('Dedicated Gemini embedding key source marker is missing; provider-config and inherited-environment fallback are disabled.');
   }
-  throw new Error('Google API key not found. Set GOOGLE_API_KEY/GEMINI_API_KEY or configure OpenClaw Google provider.');
+  if (process.env.GOOGLE_API_KEY) return process.env.GOOGLE_API_KEY;
+  throw new Error('Dedicated Gemini embedding key not found. Use scripts/gemini_embedding_keychain.py; provider-config fallback is disabled.');
 }
 
 export function cacheKey({ text, model, dimensions, taskType }) {

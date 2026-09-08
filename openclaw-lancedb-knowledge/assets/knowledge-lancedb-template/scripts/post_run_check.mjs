@@ -39,6 +39,7 @@ record("Discord raw privacy gate is explicit", sourceMap.privacy?.discordRawAppr
 record("synthetic summary indexes are excluded", JSON.stringify(sourceMap).includes("_inventory-index"));
 record("snapshot tool exists", await exists("scripts/snapshot_knowledge_assets.py"));
 record("cron tooling audit exists", await exists("scripts/audit_cron_tooling.py"));
+record("dedicated Gemini Keychain wrapper exists", await exists("scripts/gemini_embedding_keychain.py"));
 const shadowCommand = ["shadow", "index"].join(":");
 const legacyEmbedder = ["src/embed", "local.js"].join("-");
 const localModelEmbedder = ["src/embed", "qwen.js"].join("-");
@@ -52,6 +53,9 @@ record("enrichment contract exists", await exists("config/enrichment-contract.md
 const wrapper = await fs.readFile(path.join(root, "scripts/knowledge_index_incremental.sh"), "utf8");
 record("incremental wrapper uses lock", wrapper.includes("index.lock") && wrapper.includes("mkdir \"$LOCK_DIR\""));
 record("incremental wrapper rotates reports", wrapper.includes("rotate_reports"));
+record("incremental wrapper uses dedicated Keychain", wrapper.includes("gemini_embedding_keychain.py run -- incremental"));
+const searchWrapper = await fs.readFile(path.join(root, "scripts/knowledge_search.sh"), "utf8");
+record("search wrapper uses dedicated Keychain", searchWrapper.includes("gemini_embedding_keychain.py run -- search"));
 
 const testDir = path.join(root, "test");
 const testFiles = (await fs.readdir(testDir)).filter((name) => name.endsWith(".test.js"));

@@ -14,7 +14,7 @@ function run(cwd, args) {
   const result = spawnSync(process.execPath, [cli, ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, GOOGLE_API_KEY: 'integration-test-dummy-key' }
+    env: { ...process.env, GOOGLE_API_KEY: 'integration-test-dummy-key', OPENCLAW_GEMINI_KEY_SOURCE: 'com.ansai.openclaw.gemini-embedding' }
   });
   assert.equal(result.status, 0, `${args.join(' ')} failed:\n${result.stderr}\n${result.stdout}`);
   return result.stdout;
@@ -215,7 +215,7 @@ test('CLI refuses Gemini use without an explicit external-embedding approval rec
   const result = spawnSync(process.execPath, [cli, 'status'], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env, GOOGLE_API_KEY: 'integration-test-dummy-key' }
+    env: { ...process.env, GOOGLE_API_KEY: 'integration-test-dummy-key', OPENCLAW_GEMINI_KEY_SOURCE: 'com.ansai.openclaw.gemini-embedding' }
   });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stderr}\n${result.stdout}`, /privacyApprovedAt|privacyApprovedBy/);

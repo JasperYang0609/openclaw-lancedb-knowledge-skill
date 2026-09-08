@@ -38,7 +38,7 @@ Design every client-facing instruction so a general LLM can follow it without kn
 2. **Bootstrap or inspect the project.** Use `scripts/bootstrap_openclaw_lancedb.py` for a new install, or inspect an existing `knowledge-lancedb/` folder.
 3. **Edit `config/source-map.json`.** Prefer summary/project/handoff markdown first. Use `--include-discord-raw` when complete Discord message retrieval is an explicit requirement and privacy/size have been reviewed.
 4. **Choose a quality profile.** Keep Gemini at `balanced`/768 unless a benchmark justifies the opt-in 3072-dimensional `high-quality` profile. Changing dimensions requires a full rebuild.
-5. **Run gates.** Run `npm ci --ignore-scripts`, `npm test`, `npm run scan`, then `npm run index` or `npm run incremental`.
+5. **Run gates.** Run `npm ci --ignore-scripts`, `npm test`, and `npm run scan`. On macOS, store the dedicated key with `python3 scripts/gemini_embedding_keychain.py store`, then run index/search/incremental through that wrapper.
 6. **Benchmark retrieval.** Maintain 20–50 source-grounded queries and run the release gate before adopting a quality change.
 7. **Use AI enrichment only as an optional second layer.** Deterministic fields remain authoritative; validate JSONL output and review low-confidence rows.
 8. **Search before answering historical/project-state questions.** Use project filters when possible and cite source paths in the answer.
@@ -66,18 +66,31 @@ Omit `--include-discord-raw` when summaries are sufficient. Raw Discord indexing
 
 `--npm-install` uses a fixed `npm ci --ignore-scripts` command and never invokes a shell. Only add `--allow-package-scripts` after reviewing the lockfile and dependency lifecycle scripts; that flag requires `--npm-install`. Run `npm test` explicitly before `npm run postrun:check` because the post-run check is intentionally non-executing.
 
-The approval note is mandatory because redacted chunks leave the machine for Google Gemini. For an opt-in 3072-dimensional rebuild, use `--embedding-profile high-quality`. Do not switch an existing index in place: back it up, update config, run a full `npm run index`, then pass the benchmark gate.
+The approval note is mandatory because redacted chunks leave the machine for Google Gemini. For an opt-in 3072-dimensional rebuild, use `--embedding-profile high-quality`. Do not switch an existing index in place: back it up, update config, run a full wrapped index, then pass the benchmark gate.
+
+## Dedicated Gemini key on macOS
+
+Never paste an API key into chat, command arguments, configuration files, or shell exports. Store the embedding-only key through the native hidden Keychain prompt:
+
+```bash
+cd ~/.openclaw/workspace/knowledge-lancedb
+python3 scripts/gemini_embedding_keychain.py store
+python3 scripts/gemini_embedding_keychain.py check
+python3 scripts/gemini_embedding_keychain.py canary
+```
+
+The utility uses a fixed Keychain service/account. `check` reveals presence only. `canary` sends one fixed non-sensitive sentence. The project does not fall back to general OpenClaw Google-provider credentials.
 
 ## Commands after bootstrap
 
 ```bash
 cd ~/.openclaw/workspace/knowledge-lancedb
 npm run scan
-npm run index
+python3 scripts/gemini_embedding_keychain.py run -- index
 npm run status
 npm run audit
-npm run search -- "VASO 文件中心做到哪" -- --project VASO --limit 5
-npm run incremental
+python3 scripts/gemini_embedding_keychain.py run -- search "VASO 文件中心做到哪" --project VASO --limit 5
+python3 scripts/gemini_embedding_keychain.py run -- incremental
 npm run profile
 npm run snapshot:backup -- \
   --backup-root "$HOME/Desktop/<伺服器名稱>備份/LanceDB知識庫備份" \
@@ -107,7 +120,7 @@ Keep customer reports compact: include snapshot path, file/byte counts, manifest
 
 Before enabling the cron, audit `openclaw cron list --all --json` with `scripts/audit_cron_tooling.py`. Any `payload.toolsAllow` field is invalid, including an empty array. Remove it with `openclaw cron edit <job-id> --clear-tools`, then run and delete a temporary isolated GPT/Codex canary that prints `TOOL_OK` from `pwd && echo TOOL_OK`.
 
-Use `npm run search -- "query" -- --real-date-summary-only` for summary validation. This mode accepts only `summary/YYYY-MM-DD.md` backup rows and rejects `_inventory-index*` synthetic coverage files.
+Use `python3 scripts/gemini_embedding_keychain.py run -- search "query" --real-date-summary-only` for summary validation. This mode accepts only `summary/YYYY-MM-DD.md` backup rows and rejects `_inventory-index*` synthetic coverage files.
 
 ## Optional AI enrichment
 
@@ -195,6 +208,7 @@ The check validates the template command surface, source-map safety defaults, in
 ## Bundled resources
 
 - `scripts/bootstrap_openclaw_lancedb.py` — creates a portable `knowledge-lancedb` project from the bundled template.
+- `assets/knowledge-lancedb-template/scripts/gemini_embedding_keychain.py` — stores the embedding-only key via a native hidden macOS Keychain prompt and injects it only into fixed Gemini commands.
 - `assets/knowledge-lancedb-template/` — Node + LanceDB CLI template copied by the bootstrap script.
 - `references/architecture.md` — detailed architecture, schema, ranking, and operations notes.
 - `references/source-map-patterns.md` — source-map examples for OpenClaw memory, backup summaries, Obsidian vaults, project docs, and code docs.
