@@ -36,9 +36,9 @@ Jasper approved the cold-standby design and authorized preparation of a secure t
 - Implementation: complete in reviewed repository candidate
 - Tests: PASS — Python 27/27; Node 42/42; Keychain targeted 19/19
 - Review: PASS — fixed Keychain identity, trusted Node paths, no shell, dedicated-source marker, fail-closed provider behavior
-- Commit/push: pending
+- Commit/push: PASS — implementation commit `020479ef3a18c2fbc5da71e3f13cbc800eda3476`, remote divergence 0/0
 - Managed install: deferred until the post-key cutover phase, preserving Qwen and live routing
-- Human key gate: ready after commit/push
+- Human key gate: ready
 
 ## Verification evidence
 
