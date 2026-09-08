@@ -100,6 +100,8 @@ A partial `index --project NAME --append` or `index --limit N --append` run merg
 
 Daily deployments should name snapshots `daily-YYYY-MM-DD` and pass `--retention-days 30`. Pruning happens only after successful creation or verification, preserves the current date plus the previous 29 calendar days, and ignores every snapshot that does not match the daily naming convention.
 
+The managed `knowledge_snapshot_daily.sh` wrapper requires an absolute `OPENCLAW_LANCEDB_SNAPSHOT_ROOT`, acquires the same index lock as incremental indexing, reads the current row count, and performs checksum, isolated restore, database-open, and exact row-count verification before releasing the lock.
+
 Final snapshot creation follows Raw backup, Core Backup, and LanceDB closeout. Pass those timezone-aware timestamps with repeated `--require-after`; a snapshot created at or before the latest closeout fails freshness. Verification uses an absolute path constrained by `--expected-snapshot-root`, then runs manifest/checksum, isolated restore, LanceDB open, and row-count equality gates.
 
 `incident-*` and `repair-*` share one transient retention pool: seven calendar days and at most ten unprotected snapshots combined. A `.keep` marker protects a transient snapshot. Daily retention remains thirty days and unrelated manual snapshots remain outside both policies.
