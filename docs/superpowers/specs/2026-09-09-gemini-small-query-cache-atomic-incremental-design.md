@@ -1,7 +1,7 @@
 # Gemini 小型查詢快取與安全增量替換設計
 
 日期：2026-09-09  
-狀態：Jasper 已核准 A 方案  
+狀態：已切換／自然排程觀察中
 母規格：`2026-09-08-gemini-cold-standby-reactivation-design.md`
 
 ## 問題與決策
