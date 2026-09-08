@@ -5,7 +5,12 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as lancedb from '@lancedb/lancedb';
 import { loadConfig, buildChunks } from './sources.js';
-import { getEmbedder, cacheKey as embeddingCacheKey, compactEmbeddingCache } from './embed-google.js';
+import {
+  getEmbedder,
+  cacheKey as embeddingCacheKey,
+  compactEmbeddingCache,
+  queryCachePathFor
+} from './embed-google.js';
 import { loadEnrichmentCache, applyAuxiliaryEnrichment, validateEnrichmentJsonl } from './enrichment.js';
 import { evaluateBenchmark, benchmarkPasses } from './benchmark.js';
 
@@ -84,7 +89,8 @@ function loadIndexState() {
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 function writeIndexState(config, built, extra = {}, { merge = false } = {}) {
-  ensureDir(path.dirname(statePath()));
+  const targetPath = statePath();
+  ensureDir(path.dirname(targetPath));
   const files = {};
   for (const c of built.chunks) {
     if (!files[c.source_path]) {
@@ -128,7 +134,14 @@ function writeIndexState(config, built, extra = {}, { merge = false } = {}) {
     files: mergedFiles,
     ...extra
   };
-  fs.writeFileSync(statePath(), JSON.stringify(state, null, 2));
+  const tmpPath = `${targetPath}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2));
+    fs.renameSync(tmpPath, targetPath);
+  } catch (error) {
+    fs.rmSync(tmpPath, { force: true });
+    throw error;
+  }
   return state;
 }
 function groupChunksByPath(chunks) {
@@ -139,7 +152,7 @@ function groupChunksByPath(chunks) {
   }
   return map;
 }
-function sqlString(s) { return String(s).replaceAll("'", "''"); }
+export function sqlString(s) { return String(s).replaceAll("'", "''"); }
 async function deleteSourcePaths(table, paths) {
   const list = [...paths];
   const chunkSize = 25;
@@ -147,6 +160,48 @@ async function deleteSourcePaths(table, paths) {
     const pred = list.slice(i, i + chunkSize).map((p) => `source_path = '${sqlString(p)}'`).join(' OR ');
     if (pred) await table.delete(pred);
   }
+}
+
+async function readSourcePaths(table, paths) {
+  const list = [...paths];
+  const rows = [];
+  const chunkSize = 25;
+  for (let i = 0; i < list.length; i += chunkSize) {
+    const pred = list.slice(i, i + chunkSize).map((p) => `source_path = '${sqlString(p)}'`).join(' OR ');
+    if (pred) {
+      const found = await table.query().where(pred).toArray();
+      rows.push(...found.map((row) => ({
+        ...row,
+        vector: typeof row.vector?.toArray === 'function' ? Array.from(row.vector.toArray()) : row.vector
+      })));
+    }
+  }
+  return rows;
+}
+
+export async function replaceSourcePathsSafely(table, paths, newRows) {
+  const targetPaths = [...new Set(paths)];
+  const targetSet = new Set(targetPaths);
+  if (newRows.some((row) => !targetSet.has(row.source_path))) {
+    throw new Error('Incremental replacement rows must belong to an explicitly targeted source path');
+  }
+  if (!targetPaths.length) {
+    return { replacedPaths: 0, previousRows: 0, addedRows: 0 };
+  }
+  const previousRows = await readSourcePaths(table, targetPaths);
+  try {
+    await deleteSourcePaths(table, targetPaths);
+    if (newRows.length) await table.add(newRows);
+  } catch (error) {
+    try {
+      await deleteSourcePaths(table, targetPaths);
+      if (previousRows.length) await table.add(previousRows);
+    } catch (rollbackError) {
+      throw new Error(`Incremental replacement failed and rollback was incomplete: ${error.message}; rollback: ${rollbackError.message}`);
+    }
+    throw new Error(`Incremental replacement failed; previous rows restored: ${error.message}`);
+  }
+  return { replacedPaths: targetPaths.length, previousRows: previousRows.length, addedRows: newRows.length };
 }
 // Single source of truth for embedding input text; compact-cache derives cache keys with the
 // same function, so the two must stay in sync.
@@ -179,6 +234,12 @@ async function rowsForChunks(config, chunks) {
     embedding_dimensions: dims,
     vector: vectors[i]
   }));
+}
+
+export async function applyIncrementalReplacement({ table, config, changedChunks, deletePaths, rowsBuilder = rowsForChunks }) {
+  const rows = changedChunks.length ? await rowsBuilder(config, changedChunks) : [];
+  const replacement = await replaceSourcePathsSafely(table, deletePaths, rows);
+  return { rows, replacement };
 }
 
 
@@ -364,12 +425,9 @@ async function commandIncremental(config) {
 
   const changedChunks = changedPaths.flatMap((p) => currentByPath.get(p) || []);
   const deletePaths = [...new Set([...removedPaths, ...changedPaths])];
-  if (deletePaths.length) await deleteSourcePaths(table, deletePaths);
-  let rows = [];
-  if (changedChunks.length) {
-    rows = await rowsForChunks(config, changedChunks);
-    if (rows.length) await table.add(rows);
-  }
+  const { rows, replacement } = await applyIncrementalReplacement({
+    table, config, changedChunks, deletePaths
+  });
 
   const newState = writeIndexState(config, built, { lastIndexMode: 'incremental' });
   let rowCount = null;
@@ -388,6 +446,7 @@ async function commandIncremental(config) {
     changedChunks: changedChunks.length,
     addedChunks: rows.length,
     deletedPaths: deletePaths.length,
+    previousRowsProtected: replacement.previousRows,
     rowsAfter: rowCount,
     skipped: built.skipped.length,
     secretHitFiles: built.secretHits.length
@@ -406,15 +465,15 @@ async function commandCompactCache(config) {
   const model = emb.model || 'gemini-embedding-001';
   const dimensions = emb.dimensions || 768;
   const taskType = emb.documentTaskType || 'RETRIEVAL_DOCUMENT';
-  const queryTaskType = emb.queryTaskType || 'RETRIEVAL_QUERY';
   const keepKeys = new Set(built.chunks.map((c) => embeddingCacheKey({ text: chunkEmbedText(c), model, dimensions, taskType })));
-  // Query vectors (embedOne writes them to the same JSONL under queryTaskType) cannot be
-  // recomputed from chunks, so they are kept by row metadata; repeated queries then avoid extra
-  // API calls after compaction. Disabled when the task types match to avoid keeping stale
-  // document rows.
-  const keepQueryMeta = queryTaskType !== taskType ? { taskType: queryTaskType, model, dimensions } : null;
-  const result = compactEmbeddingCache({ cachePath: emb.cachePath, keepKeys, keepQueryMeta });
-  console.log(JSON.stringify({ ...result, chunksAvailable: built.chunks.length, keepKeys: keepKeys.size }, null, 2));
+  const document = compactEmbeddingCache({ cachePath: emb.cachePath, keepKeys });
+  const queryTaskType = emb.queryTaskType || 'RETRIEVAL_QUERY';
+  const query = compactEmbeddingCache({
+    cachePath: emb.queryCachePath || queryCachePathFor(emb.cachePath),
+    keepKeys: new Set(),
+    keepQueryMeta: { taskType: queryTaskType, model, dimensions }
+  });
+  console.log(JSON.stringify({ document, query, chunksAvailable: built.chunks.length, keepKeys: keepKeys.size }, null, 2));
 }
 
 async function commandStatus(config) {

@@ -224,6 +224,7 @@ def main() -> int:
         "batchSize": 40,
         "throttleMs": 250,
         "cachePath": f"./data/embedding-cache/google-gemini-embedding-001-{dimensions}.jsonl",
+        "queryCachePath": f"./data/embedding-cache/google-gemini-embedding-001-{dimensions}.queries.jsonl",
         "privacyApprovedAt": datetime.now(timezone.utc).isoformat(),
         "privacyApprovedBy": args.approved_by.strip(),
     }

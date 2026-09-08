@@ -16,6 +16,7 @@
     "batchSize": 40,
     "throttleMs": 250,
     "cachePath": "./data/embedding-cache/google-gemini-embedding-001-768.jsonl",
+    "queryCachePath": "./data/embedding-cache/google-gemini-embedding-001-768.queries.jsonl",
     "privacyApprovedAt": null,
     "privacyApprovedBy": null
   },

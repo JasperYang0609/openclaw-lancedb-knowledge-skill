@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as lancedb from '@lancedb/lancedb';
 import { buildChunks } from '../src/sources.js';
-import { cacheKey } from '../src/embed-google.js';
+import { cacheKey, queryCachePathFor } from '../src/embed-google.js';
 
 const cli = path.resolve('src/cli.js');
 
@@ -44,7 +44,7 @@ function seedGeminiCache(root, config, query) {
   });
   const queryVector = Array(embedding.dimensions).fill(0);
   queryVector[0] = 1;
-  rows.push({
+  const queryRow = {
     key: cacheKey({
       text: query,
       model: embedding.model,
@@ -55,10 +55,12 @@ function seedGeminiCache(root, config, query) {
     model: embedding.model,
     dimensions: embedding.dimensions,
     taskType: embedding.queryTaskType
-  });
+  };
   const cachePath = path.join(root, embedding.cachePath);
+  const queryCachePath = path.join(root, embedding.queryCachePath || queryCachePathFor(embedding.cachePath));
   fs.mkdirSync(path.dirname(cachePath), { recursive: true });
   fs.writeFileSync(cachePath, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+  fs.writeFileSync(queryCachePath, JSON.stringify(queryRow) + '\n');
 }
 
 test('CLI indexes deterministic metadata, validates optional enrichment, and passes a 20-case benchmark', async () => {
@@ -170,6 +172,20 @@ test('CLI indexes deterministic metadata, validates optional enrichment, and pas
   const syncedState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(syncedState.version, 2);
   assert.equal(syncedState.syncedFromValidatedSchemaV2Table, true);
+
+  fs.appendFileSync(path.join(docs, 'decision.md'), '\n\nIncremental marker: safe replacement completed.');
+  seedGeminiCache(root, config, benchmarkQuery);
+  run(root, ['incremental']);
+  const tableAfterIncremental = await db.openTable('knowledge_chunks');
+  const rowsAfterIncremental = await tableAfterIncremental.query().toArray();
+  assert.equal(rowsAfterIncremental.length, 3);
+  assert.equal(
+    rowsAfterIncremental.filter((row) => String(row.chunk_text).includes('safe replacement completed')).length,
+    1
+  );
+  const incrementalReport = JSON.parse(fs.readFileSync(path.join(root, 'reports/incremental-manifest.latest.json'), 'utf8'));
+  assert.equal(incrementalReport.changedFiles, 1);
+  assert.equal(incrementalReport.previousRowsProtected, 1);
 });
 
 test('sync-state refuses to stamp a legacy table as schema v2', async () => {

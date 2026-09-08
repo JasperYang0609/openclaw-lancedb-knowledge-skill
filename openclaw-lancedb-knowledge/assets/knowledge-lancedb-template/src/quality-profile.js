@@ -2,7 +2,9 @@ const GEMINI_MODEL = 'gemini-embedding-001';
 
 function cachePathForDimensions(cachePath, dimensions) {
   if (!cachePath) return cachePath;
-  if (/[-_]\d+\.jsonl$/i.test(cachePath)) return cachePath.replace(/([-_])\d+(\.jsonl)$/i, `$1${dimensions}$2`);
+  if (/[-_]\d+(?:\.[^.]+)?\.jsonl$/i.test(cachePath)) {
+    return cachePath.replace(/([-_])\d+((?:\.[^.]+)?\.jsonl)$/i, `$1${dimensions}$2`);
+  }
   if (/\.jsonl$/i.test(cachePath)) return cachePath.replace(/\.jsonl$/i, `-${dimensions}.jsonl`);
   return `${cachePath}-${dimensions}.jsonl`;
 }
@@ -30,7 +32,18 @@ export function resolveEmbeddingProfile(embedding = {}) {
     if (!encodedDimension || Number(encodedDimension) !== dimensions) cachePath = cachePathForDimensions(cachePath, dimensions);
   }
   if (!cachePath) cachePath = `./data/embedding-cache/${model}-${dimensions}.jsonl`;
-  return { ...embedding, provider, model, profile, dimensions, ...(cachePath ? { cachePath } : {}) };
+  let queryCachePath = embedding.queryCachePath;
+  if (queryCachePath) queryCachePath = cachePathForDimensions(queryCachePath, dimensions);
+  if (!queryCachePath) queryCachePath = cachePath.replace(/\.jsonl$/i, '.queries.jsonl');
+  return {
+    ...embedding,
+    provider,
+    model,
+    profile,
+    dimensions,
+    cachePath,
+    queryCachePath
+  };
 }
 
 export function resolveQualityConfig(config = {}) {

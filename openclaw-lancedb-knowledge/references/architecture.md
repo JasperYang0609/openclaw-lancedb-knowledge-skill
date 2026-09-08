@@ -32,7 +32,7 @@ Create a local semantic retrieval layer for OpenClaw so old decisions, project p
 4. Markdown is split by headings and paragraph boundaries; only a single oversized paragraph falls back to sentence/whitespace-aware hard splitting with overlap.
 5. Deterministic rules attach a stable document type, tags, importance, and metadata schema version. These fields are authoritative and do not call an LLM.
 6. Optional AI output is read from a validated local JSONL cache. It is written only to `ai_*` columns, gets a derived confidence/review state, and cannot overwrite source metadata. Disabled, missing, invalid, or low-confidence enrichment leaves deterministic retrieval intact.
-7. Rows are embedded and written to LanceDB. Remote embedding vectors are L2-normalized before they are written and before queries (zero vectors are left unchanged); the JSONL embedding cache stores the raw API vectors. Append mode deletes existing rows for the same `source_path` before adding, so re-indexing a file never duplicates chunks.
+7. Rows are embedded and written to LanceDB. Remote embedding vectors are L2-normalized before they are written and before queries (zero vectors are left unchanged); JSONL embedding caches store the raw API vectors. Incremental mode finishes and validates all new vectors before replacing affected `source_path` rows. If LanceDB add fails, it removes partial rows and restores the previous rows before returning an error.
 8. Incremental indexing compares `source_path + file_sha256` plus a build fingerprint for schema, embedding identity, chunking, and enrichment input. A schema or vector-dimension migration triggers a one-time full rebuild instead of adding incompatible rows.
 9. `sync-state` writes schema-v2 state only after validating the existing table schema, vector dimensions, embedding identity, complete chunk IDs/hashes, deterministic metadata, and enrichment fields against current sources. Legacy or mismatched tables are rejected with a full-index instruction.
 10. Search embeds the query, fetches vector candidates, then reranks with keyword overlap (including deterministic metadata and only `valid` AI auxiliary text), recency, and progress-document boosts.
@@ -69,11 +69,12 @@ This is the only product provider in this repository. Use it after explicit priv
   "queryTaskType": "RETRIEVAL_QUERY",
   "batchSize": 40,
   "throttleMs": 250,
-  "cachePath": "./data/embedding-cache/google-gemini-embedding-001-768.jsonl"
+  "cachePath": "./data/embedding-cache/google-gemini-embedding-001-768.jsonl",
+  "queryCachePath": "./data/embedding-cache/google-gemini-embedding-001-768.queries.jsonl"
 }
 ```
 
-`balanced` is the stable default at 768 dimensions. `high-quality` uses 3072 dimensions and a separate cache path. Every Gemini cache path is normalized to include its vector dimension, including legacy unsuffixed custom paths. A profile change is an opt-in migration: back up the DB/cache, rebuild the table, and compare a reviewed benchmark before adopting it. A larger vector is not automatically better for every corpus.
+`balanced` is the stable default at 768 dimensions. `high-quality` uses 3072 dimensions and separate dimension-scoped cache paths. Document and query vectors must never share one file: searches load only the small query cache, while daily indexing loads only the active incremental document cache. A profile change is an opt-in migration: back up the DB/cache, rebuild the table, and compare a reviewed benchmark before adopting it. A larger vector is not automatically better for every corpus.
 
 ## AI enrichment isolation
 
@@ -81,17 +82,11 @@ The template never calls an LLM for enrichment. `prepare-enrichment` creates a l
 
 This separation keeps the public skill model-agnostic: GPT, Claude, Gemini, a local model, or a human process can produce the same contract without changing index code. AI classification is never the only retrieval route.
 
-API key resolution order in the template:
-
-1. `GOOGLE_API_KEY`
-2. `GEMINI_API_KEY`
-3. `OPENCLAW_CONFIG_PATH`
-4. `~/.openclaw/openclaw.json`
-5. `~/.openclaw/config.json`
+API key resolution fails closed unless the dedicated Keychain runner marks the child process with `OPENCLAW_GEMINI_KEY_SOURCE` and injects `GOOGLE_API_KEY` in memory. Provider config and inherited-environment fallback are disabled.
 
 ## Incremental indexing
 
-Use `npm run incremental` after backup jobs. The wrapper script creates a lock directory at `data/index.lock` to prevent overlapping runs and writes logs under `reports/cron-logs/`. After each run the wrapper compacts the embedding cache when it exceeds 200MB (`npm run compact-cache`) and rotates timestamped report manifests and cron logs, keeping the 14 most recent of each; `*.latest.json` files are always kept.
+Use `npm run incremental` after backup jobs. The wrapper script creates a lock directory at `data/index.lock` to prevent overlapping runs and writes logs under `reports/cron-logs/`. Changed vectors are fully prepared before table mutation; affected old rows are retained for compensating restore until the replacement succeeds. After each run the wrapper compacts the active document cache when it exceeds 200MB (`npm run compact-cache`) and rotates timestamped report manifests and cron logs, keeping the 14 most recent of each; `*.latest.json` files are always kept.
 
 If the table or state file is missing, the row schema is legacy, or vector dimensions changed, incremental falls back to a full index.
 
@@ -113,7 +108,7 @@ Discord raw approval is `NOT_CONFIRMED`, `APPROVED_EXTERNAL`, or `LOCAL_ONLY`. E
 
 ## Embedding cache maintenance
 
-`npm run compact-cache` rewrites the JSONL embedding cache, keeping only vectors for chunks the current sources still produce plus query vectors that match the current model/dimensions. It never calls the embedding API, so it is safe to run at any time. The cache key is derived from the same `project\ntitle\nheading\nchunk_text` embedding input used at index time.
+`npm run compact-cache` rewrites the active document and query JSONL caches separately. The document cache keeps only vectors for chunks the current sources still produce; the query cache keeps current-model query rows. It never calls the embedding API. The document key is derived from the same `project\ntitle\nheading\nchunk_text` embedding input used at index time.
 
 ## Search behavior
 

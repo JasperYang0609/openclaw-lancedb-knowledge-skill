@@ -48,7 +48,12 @@ export class EmbeddingCache {
   constructor(cachePath) {
     this.cachePath = path.resolve(cachePath || './data/embedding-cache/google-gemini.jsonl');
     this.map = new Map();
+    this.loaded = false;
     ensureDir(path.dirname(this.cachePath));
+  }
+  ensureLoaded() {
+    if (this.loaded) return;
+    this.loaded = true;
     if (fs.existsSync(this.cachePath)) {
       const lines = fs.readFileSync(this.cachePath, 'utf8').split(/\r?\n/).filter(Boolean);
       for (const line of lines) {
@@ -59,11 +64,21 @@ export class EmbeddingCache {
       }
     }
   }
-  get(key) { return this.map.get(key); }
+  get(key) {
+    this.ensureLoaded();
+    return this.map.get(key);
+  }
   append(key, vector, meta = {}) {
+    this.ensureLoaded();
     this.map.set(key, vector);
     fs.appendFileSync(this.cachePath, JSON.stringify({ key, vector, ...meta, cachedAt: new Date().toISOString() }) + '\n');
   }
+}
+
+export function queryCachePathFor(documentCachePath) {
+  const source = documentCachePath || './data/embedding-cache/google-gemini.jsonl';
+  if (/\.jsonl$/i.test(source)) return source.replace(/\.jsonl$/i, '.queries.jsonl');
+  return `${source}.queries.jsonl`;
 }
 
 // Keep only cache rows whose key is in keepKeys and rewrite the JSONL (last row wins per key);
@@ -131,7 +146,13 @@ export class GoogleGeminiEmbedder {
     this.batchSize = config.batchSize || 40;
     this.throttleMs = config.throttleMs ?? 250;
     this.apiKey = resolveGoogleApiKey();
-    this.cache = new EmbeddingCache(config.cachePath || './data/embedding-cache/google-gemini.jsonl');
+    const documentCachePath = config.cachePath || './data/embedding-cache/google-gemini.jsonl';
+    const queryCachePath = config.queryCachePath || queryCachePathFor(documentCachePath);
+    if (path.resolve(documentCachePath) === path.resolve(queryCachePath)) {
+      throw new Error('Gemini document and query cache paths must be different');
+    }
+    this.documentCache = new EmbeddingCache(documentCachePath);
+    this.queryCache = new EmbeddingCache(queryCachePath);
   }
 
   makeRequest(text, taskType) {
@@ -145,13 +166,13 @@ export class GoogleGeminiEmbedder {
 
   async embedOne(text, taskType = this.queryTaskType) {
     const key = cacheKey({ text, model: this.model, dimensions: this.dimensions, taskType });
-    const cached = this.cache.get(key);
+    const cached = this.queryCache.get(key);
     if (cached) return l2Normalize(validateEmbeddingVector(cached, this.dimensions, 'Cached Gemini embedding'));
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:embedContent`;
     const data = await postJsonWithRetry(url, this.makeRequest(text, taskType), { apiKey: this.apiKey });
     const vector = data.embedding?.values;
     validateEmbeddingVector(vector, this.dimensions, 'Gemini API embedding');
-    this.cache.append(key, vector, { model: this.model, dimensions: this.dimensions, taskType });
+    this.queryCache.append(key, vector, { model: this.model, dimensions: this.dimensions, taskType });
     return l2Normalize(vector);
   }
 
@@ -161,7 +182,7 @@ export class GoogleGeminiEmbedder {
     const missing = [];
     for (let i = 0; i < texts.length; i++) {
       const key = cacheKey({ text: texts[i], model: this.model, dimensions: this.dimensions, taskType });
-      const cached = this.cache.get(key);
+      const cached = this.documentCache.get(key);
       if (cached) out[i] = l2Normalize(validateEmbeddingVector(cached, this.dimensions, 'Cached Gemini embedding'));
       else missing.push({ i, key, text: texts[i] });
     }
@@ -179,7 +200,7 @@ export class GoogleGeminiEmbedder {
         validateEmbeddingVector(vector, this.dimensions, 'Gemini API embedding');
         const item = batch[j];
         out[item.i] = l2Normalize(vector);
-        this.cache.append(item.key, vector, { model: this.model, dimensions: this.dimensions, taskType });
+        this.documentCache.append(item.key, vector, { model: this.model, dimensions: this.dimensions, taskType });
       });
       done += batch.length;
       onProgress({ phase: 'remote', total: texts.length, done, batchSize: batch.length });

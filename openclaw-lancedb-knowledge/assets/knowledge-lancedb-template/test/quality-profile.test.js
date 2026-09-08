@@ -6,6 +6,7 @@ test('balanced Gemini profile keeps the stable 768-dimensional default', () => {
   const cfg = resolveEmbeddingProfile({ provider: 'google-gemini', model: 'gemini-embedding-001', profile: 'balanced' });
   assert.equal(cfg.dimensions, 768);
   assert.match(cfg.cachePath, /-768\.jsonl$/);
+  assert.match(cfg.queryCachePath, /-768\.queries\.jsonl$/);
 });
 
 test('high-quality Gemini profile opts into 3072 dimensions and a separate cache', () => {
@@ -30,6 +31,17 @@ test('high-quality profile retargets an existing dimensional cache instead of mi
   });
   assert.equal(embedding.dimensions, 3072);
   assert.equal(embedding.cachePath, './data/embedding-cache/google-gemini-embedding-001-3072.jsonl');
+  assert.equal(embedding.queryCachePath, './data/embedding-cache/google-gemini-embedding-001-3072.queries.jsonl');
+});
+
+test('explicit query cache paths remain dimension-scoped with the selected profile', () => {
+  const embedding = resolveEmbeddingProfile({
+    provider: 'google-gemini',
+    profile: 'high-quality',
+    cachePath: './data/embedding-cache/gemini-768.jsonl',
+    queryCachePath: './data/embedding-cache/gemini-768.queries.jsonl'
+  });
+  assert.equal(embedding.queryCachePath, './data/embedding-cache/gemini-3072.queries.jsonl');
 });
 
 test('unsuffixed Gemini cache paths are dimension-scoped for safe profile isolation', () => {

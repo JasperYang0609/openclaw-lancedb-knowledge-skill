@@ -7,6 +7,7 @@ import {
   cacheKey,
   compactEmbeddingCache,
   GoogleGeminiEmbedder,
+  queryCachePathFor,
   resolveGoogleApiKey,
   validateEmbeddingVector
 } from '../src/embed-google.js';
@@ -88,8 +89,67 @@ test('Gemini cache rejects non-numeric vectors even when the cache key is valid'
   const previousSource = process.env.OPENCLAW_GEMINI_KEY_SOURCE;
   setDedicatedTestKey('test-only-dummy-key');
   try {
-    const embedder = new GoogleGeminiEmbedder({ model: MODEL, dimensions: DIMS, cachePath });
+    const embedder = new GoogleGeminiEmbedder({
+      model: MODEL,
+      dimensions: DIMS,
+      cachePath: path.join(dir, 'documents.jsonl'),
+      queryCachePath: cachePath
+    });
     await assert.rejects(embedder.embedOne(text), /finite numeric values/);
+  } finally {
+    if (previousKey === undefined) delete process.env.GOOGLE_API_KEY;
+    else process.env.GOOGLE_API_KEY = previousKey;
+    if (previousSource === undefined) delete process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+    else process.env.OPENCLAW_GEMINI_KEY_SOURCE = previousSource;
+  }
+});
+
+test('query embeddings use an independent lazy cache and never load the document cache', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'embed-query-cache-test-'));
+  const documentCachePath = path.join(dir, 'documents.jsonl');
+  const queryCachePath = path.join(dir, 'queries.jsonl');
+  const text = 'cached query';
+  const key = cacheKey({ text, model: MODEL, dimensions: DIMS, taskType: 'RETRIEVAL_QUERY' });
+  fs.writeFileSync(documentCachePath, 'intentionally malformed document cache\n'.repeat(1000));
+  fs.writeFileSync(queryCachePath, JSON.stringify({
+    key,
+    vector: Array(DIMS).fill(1),
+    model: MODEL,
+    dimensions: DIMS,
+    taskType: 'RETRIEVAL_QUERY'
+  }) + '\n');
+  const previousKey = process.env.GOOGLE_API_KEY;
+  const previousSource = process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+  setDedicatedTestKey('test-only-dummy-key');
+  try {
+    const embedder = new GoogleGeminiEmbedder({
+      model: MODEL,
+      dimensions: DIMS,
+      cachePath: documentCachePath,
+      queryCachePath
+    });
+    const vector = await embedder.embedOne(text);
+    assert.equal(vector.length, DIMS);
+    assert.equal(embedder.documentCache.loaded, false);
+    assert.equal(embedder.queryCache.loaded, true);
+  } finally {
+    if (previousKey === undefined) delete process.env.GOOGLE_API_KEY;
+    else process.env.GOOGLE_API_KEY = previousKey;
+    if (previousSource === undefined) delete process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+    else process.env.OPENCLAW_GEMINI_KEY_SOURCE = previousSource;
+  }
+});
+
+test('query cache path is derived separately and an explicitly shared path fails closed', () => {
+  assert.equal(queryCachePathFor('/tmp/gemini-768.jsonl'), '/tmp/gemini-768.queries.jsonl');
+  const previousKey = process.env.GOOGLE_API_KEY;
+  const previousSource = process.env.OPENCLAW_GEMINI_KEY_SOURCE;
+  setDedicatedTestKey('test-only-dummy-key');
+  try {
+    assert.throws(
+      () => new GoogleGeminiEmbedder({ cachePath: '/tmp/shared.jsonl', queryCachePath: '/tmp/shared.jsonl' }),
+      /must be different/
+    );
   } finally {
     if (previousKey === undefined) delete process.env.GOOGLE_API_KEY;
     else process.env.GOOGLE_API_KEY = previousKey;
