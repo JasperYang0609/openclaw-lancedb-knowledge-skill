@@ -57,4 +57,8 @@ python3 openclaw-lancedb-knowledge/scripts/bootstrap_openclaw_lancedb.py \
 
 This project is maintained as part of the OpenClaw ecosystem. We plan to use Codex to review pull requests, improve LanceDB/OpenClaw compatibility, generate tests for indexing and retrieval behavior, and keep installation and source-map documentation current.
 
+## Development CI policy
+
+Before pushing, accumulate a reviewable change and run `bash scripts/check_push.sh`. Non-main branches run the same focused Branch Check on GitHub. Pull requests and `main` run the complete CI suite. When a branch already has an open pull request, the branch workflow exits after a read-only PR lookup so the same commit is not tested twice. Newer runs cancel older runs on the same branch or pull request; genuine failures remain visible and notified.
+
 API-assisted maintenance should focus on reusable open-source workflows: issue triage, regression checks, documentation updates, and release notes. Codex should not be used to index or inspect private customer memories, transcripts, backups, or project documents.
