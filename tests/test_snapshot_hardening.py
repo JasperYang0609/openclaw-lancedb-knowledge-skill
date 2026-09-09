@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -86,4 +88,55 @@ def test_freshness_gate_rejects_snapshot_before_closeout():
         raised = False
     except SystemExit as exc:
         raised = json.loads(str(exc))["pass"] is False
+    assert raised
+
+
+def test_stale_daily_snapshot_is_preserved_and_repair_snapshot_is_reused(tmp_path: Path):
+    project = fixture_project(tmp_path)
+    backup = tmp_path / "backup"
+    snapshot.create_snapshot(project, backup, "daily-2026-09-09", [])
+    daily = backup / "snapshots/daily-2026-09-09"
+    created_at = json.loads((daily / snapshot.MANIFEST_NAME).read_text(encoding="utf-8"))["createdAt"]
+
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "--project-dir", str(project),
+        "--backup-root", str(backup),
+        "--snapshot-name", "daily-2026-09-09",
+        "--reuse-existing",
+        "--stale-fallback-name", "repair-2026-09-09-post-index-fixture",
+        "--require-after", created_at,
+        "--restore-canary",
+    ]
+    first = subprocess.run(command, text=True, capture_output=True, check=False)
+    assert first.returncode == 0, first.stderr
+    first_payload = json.loads(first.stdout)
+    assert first_payload["created"] is True
+    assert first_payload["reused"] is False
+    assert first_payload["fallbackFrom"] == "daily-2026-09-09"
+    assert daily.is_dir()
+
+    second = subprocess.run(command, text=True, capture_output=True, check=False)
+    assert second.returncode == 0, second.stderr
+    second_payload = json.loads(second.stdout)
+    assert second_payload["created"] is False
+    assert second_payload["reused"] is True
+    assert second_payload["snapshot"].endswith("repair-2026-09-09-post-index-fixture")
+
+
+def test_snapshot_verification_rejects_symlinked_payload(tmp_path: Path):
+    project = fixture_project(tmp_path)
+    backup = tmp_path / "backup"
+    snapshot.create_snapshot(project, backup, "daily-2026-09-09", [])
+    candidate = backup / "snapshots/daily-2026-09-09"
+    payload = candidate / "src/metadata.js"
+    payload.unlink()
+    payload.symlink_to(project / "src/metadata.js")
+
+    try:
+        snapshot.verify_snapshot(candidate)
+        raised = False
+    except SystemExit as exc:
+        raised = "Symlinks are not allowed" in str(exc)
     assert raised

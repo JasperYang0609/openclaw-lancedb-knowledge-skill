@@ -17,3 +17,9 @@ def test_daily_snapshot_wrapper_is_fail_closed_and_verifies_restore():
     assert "--verify-db" in text
     assert "--expected-row-count" in text
     assert "--retention-days 30" in text
+    assert "incremental-manifest.latest.json" in text
+    assert "google-gemini" in text
+    assert "--reuse-existing" in text
+    assert "--stale-fallback-name" in text
+    assert "--require-after" in text
+    assert "repair-$TODAY-post-index-" in text

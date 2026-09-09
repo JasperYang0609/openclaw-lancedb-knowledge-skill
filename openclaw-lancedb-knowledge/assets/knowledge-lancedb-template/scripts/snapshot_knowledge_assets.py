@@ -39,6 +39,7 @@ MANIFEST_NAME = "snapshot-manifest.json"
 CHECKSUM_NAME = "CHECKSUMS.sha256"
 DAILY_SNAPSHOT_RE = re.compile(r"^daily-(\d{4}-\d{2}-\d{2})$")
 TRANSIENT_SNAPSHOT_RE = re.compile(r"^(incident|repair)-(\d{4}-\d{2}-\d{2})(?:-|$)")
+SAFE_SNAPSHOT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def sha256(path: Path) -> str:
@@ -107,6 +108,9 @@ def write_manifest(
 
 
 def verify_snapshot(snapshot: Path) -> dict:
+    if not snapshot.is_dir():
+        raise SystemExit(f"Snapshot directory not found: {snapshot}")
+    reject_symlinks(snapshot)
     manifest_path = snapshot / MANIFEST_NAME
     if not manifest_path.is_file():
         raise SystemExit(f"Snapshot manifest not found: {manifest_path}")
@@ -192,6 +196,12 @@ def resolve_snapshot_path(raw: str, expected_snapshot_root: str | None) -> Path:
     return snapshot
 
 
+def validate_snapshot_name(value: str, *, field: str = "--snapshot-name") -> str:
+    if not SAFE_SNAPSHOT_NAME_RE.fullmatch(value) or value in {".", ".."}:
+        raise SystemExit(f"{field} must be one safe path segment")
+    return value
+
+
 def restore_canary(snapshot: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="knowledge-snapshot-restore-") as tmp:
         restored = Path(tmp) / snapshot.name
@@ -258,6 +268,25 @@ def create_snapshot(
     verification = verify_snapshot(target)
     freshness = freshness_gate(verification["createdAt"], required_after or [])
     return {"ok": True, "created": True, **verification, "freshness": freshness, "missingOptional": manifest["missingOptional"]}
+
+
+def validate_snapshot_candidate(
+    project: Path,
+    snapshot: Path,
+    *,
+    required_after: list[str],
+    restore_canary_enabled: bool,
+    verify_db_enabled: bool,
+    table_name: str,
+    expected_rows: int | None,
+) -> dict:
+    result = verify_snapshot(snapshot)
+    result["freshness"] = freshness_gate(result["createdAt"], required_after)
+    if restore_canary_enabled:
+        result["restoreCanary"] = restore_canary(snapshot)
+    if verify_db_enabled:
+        result["database"] = verify_database(project, snapshot, table_name, expected_rows)
+    return result
 
 
 def prune_daily_snapshots(backup_root: Path, retention_days: int, reference_day: date) -> dict:
@@ -362,6 +391,15 @@ def main() -> int:
     parser.add_argument("--project-dir", default=str(Path(__file__).resolve().parents[1]))
     parser.add_argument("--backup-root", help="Backup root that will contain snapshots/<name>")
     parser.add_argument("--snapshot-name", default=date.today().isoformat())
+    parser.add_argument(
+        "--reuse-existing",
+        action="store_true",
+        help="Verify and reuse an existing immutable snapshot instead of failing on the name collision",
+    )
+    parser.add_argument(
+        "--stale-fallback-name",
+        help="When a daily snapshot exists but is stale or invalid, preserve it and create/reuse this repair-* snapshot",
+    )
     parser.add_argument("--verify-snapshot", help="Verify an existing snapshot instead of creating one")
     parser.add_argument("--expected-snapshot-root", help="Absolute backup root used to reject misplaced relative-path verification")
     parser.add_argument("--require-after", action="append", default=[], help="Timezone-aware closeout timestamp; snapshot must be newer than all supplied values")
@@ -408,12 +446,72 @@ def main() -> int:
         parser.error("--backup-root is required when creating a snapshot")
     project = Path(args.project_dir).expanduser().resolve()
     backup_root = Path(args.backup_root).expanduser().resolve()
-    result = create_snapshot(project, backup_root, args.snapshot_name, args.require_after)
-    snapshot = backup_root / "snapshots" / args.snapshot_name
-    if args.restore_canary:
-        result["restoreCanary"] = restore_canary(snapshot)
-    if args.verify_db:
-        result["database"] = verify_database(project, snapshot, args.table_name, args.expected_row_count)
+    snapshot_name = validate_snapshot_name(args.snapshot_name)
+    fallback_name = None
+    if args.stale_fallback_name:
+        fallback_name = validate_snapshot_name(args.stale_fallback_name, field="--stale-fallback-name")
+        if not args.reuse_existing:
+            parser.error("--stale-fallback-name requires --reuse-existing")
+        if not DAILY_SNAPSHOT_RE.fullmatch(snapshot_name):
+            parser.error("--stale-fallback-name is allowed only for daily-YYYY-MM-DD snapshots")
+        if not TRANSIENT_SNAPSHOT_RE.match(fallback_name):
+            parser.error("--stale-fallback-name must use an incident-* or repair-* name")
+
+    snapshot = backup_root / "snapshots" / snapshot_name
+    if snapshot.exists() and args.reuse_existing:
+        try:
+            result = validate_snapshot_candidate(
+                project,
+                snapshot,
+                required_after=args.require_after,
+                restore_canary_enabled=args.restore_canary,
+                verify_db_enabled=args.verify_db,
+                table_name=args.table_name,
+                expected_rows=args.expected_row_count,
+            )
+            result.update({"created": False, "reused": True})
+        except SystemExit as exc:
+            if fallback_name is None:
+                raise
+            primary_error = str(exc)
+            snapshot = backup_root / "snapshots" / fallback_name
+            if snapshot.exists():
+                result = validate_snapshot_candidate(
+                    project,
+                    snapshot,
+                    required_after=args.require_after,
+                    restore_canary_enabled=args.restore_canary,
+                    verify_db_enabled=args.verify_db,
+                    table_name=args.table_name,
+                    expected_rows=args.expected_row_count,
+                )
+                result.update({"created": False, "reused": True})
+            else:
+                create_snapshot(project, backup_root, fallback_name, args.require_after)
+                result = validate_snapshot_candidate(
+                    project,
+                    snapshot,
+                    required_after=args.require_after,
+                    restore_canary_enabled=args.restore_canary,
+                    verify_db_enabled=args.verify_db,
+                    table_name=args.table_name,
+                    expected_rows=args.expected_row_count,
+                )
+                result.update({"created": True, "reused": False})
+            result["fallbackFrom"] = snapshot_name
+            result["fallbackReason"] = primary_error
+    else:
+        create_snapshot(project, backup_root, snapshot_name, args.require_after)
+        result = validate_snapshot_candidate(
+            project,
+            snapshot,
+            required_after=args.require_after,
+            restore_canary_enabled=args.restore_canary,
+            verify_db_enabled=args.verify_db,
+            table_name=args.table_name,
+            expected_rows=args.expected_row_count,
+        )
+        result.update({"created": True, "reused": False})
     if args.retention_days is not None:
         result["retention"] = prune_daily_snapshots(
             Path(args.backup_root).expanduser().resolve(),
