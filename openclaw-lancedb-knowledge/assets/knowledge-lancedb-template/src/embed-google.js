@@ -116,26 +116,44 @@ export function compactEmbeddingCache({ cachePath, keepKeys, keepQueryMeta = nul
   const resolved = path.resolve(cachePath || './data/embedding-cache/google-gemini.jsonl');
   if (!fs.existsSync(resolved)) return { ok: true, cachePath: resolved, before: 0, kept: 0, removed: 0 };
   const bytesBefore = fs.statSync(resolved).size;
-  const lines = fs.readFileSync(resolved, 'utf8').split(/\r?\n/).filter(Boolean);
-  const kept = new Map(); // key -> original JSONL line (last row wins for duplicate keys)
+  const kept = new Map(); // key -> { lineNumber, isQuery } (last matching row wins)
   let parsed = 0;
-  let keptQueryRows = 0;
-  for (const line of lines) {
+  let lineNumber = 0;
+  forEachJsonlLineSync(resolved, (line) => {
+    const currentLine = lineNumber++;
     let row;
-    try { row = JSON.parse(line); } catch { continue; }
-    if (!row.key || !Array.isArray(row.vector)) continue;
+    try { row = JSON.parse(line); } catch { return; }
+    if (!row.key || !Array.isArray(row.vector)) return;
     parsed += 1;
-    if (keepKeys.has(row.key)) { kept.set(row.key, line); continue; }
+    if (keepKeys.has(row.key)) {
+      kept.set(row.key, { lineNumber: currentLine, isQuery: false });
+      return;
+    }
     if (keepQueryMeta
       && row.taskType === keepQueryMeta.taskType
       && row.model === keepQueryMeta.model
       && row.dimensions === keepQueryMeta.dimensions) {
-      if (!kept.has(row.key)) keptQueryRows += 1;
-      kept.set(row.key, line);
+      kept.set(row.key, { lineNumber: currentLine, isQuery: true });
     }
-  }
+  });
+  const keptQueryRows = [...kept.values()].filter((entry) => entry.isQuery).length;
   const tmpPath = resolved + '.compact.tmp';
-  fs.writeFileSync(tmpPath, [...kept.values()].map((l) => l + '\n').join(''));
+  const outFd = fs.openSync(tmpPath, 'w');
+  lineNumber = 0;
+  try {
+    forEachJsonlLineSync(resolved, (line) => {
+      const currentLine = lineNumber++;
+      let row;
+      try { row = JSON.parse(line); } catch { return; }
+      if (kept.get(row.key)?.lineNumber === currentLine) fs.writeSync(outFd, line + '\n');
+    });
+    fs.fsyncSync(outFd);
+  } catch (error) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    throw error;
+  } finally {
+    fs.closeSync(outFd);
+  }
   fs.renameSync(tmpPath, resolved);
   const bytesAfter = fs.statSync(resolved).size;
   return { ok: true, cachePath: resolved, before: parsed, kept: kept.size, keptQueryRows, removed: parsed - kept.size, bytesBefore, bytesAfter };

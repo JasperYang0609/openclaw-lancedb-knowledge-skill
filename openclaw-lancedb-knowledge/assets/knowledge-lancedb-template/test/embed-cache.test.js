@@ -83,6 +83,33 @@ test('compactEmbeddingCache keeps query rows via keepQueryMeta and drops stale o
   assert.deepEqual(new Set(keys), new Set([docKeep.key, queryCurrent.key]));
 });
 
+test('compactEmbeddingCache streams source and output without whole-file strings', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'embed-cache-compact-stream-test-'));
+  const cachePath = path.join(dir, 'cache.jsonl');
+  const keep = makeRow({ text: 'doc-streamed', taskType: 'RETRIEVAL_DOCUMENT' });
+  const duplicate = { ...keep.row, vector: [3, 2, 1], padding: '界'.repeat(30_000) };
+  fs.writeFileSync(cachePath, JSON.stringify(keep.row) + '\n' + JSON.stringify(duplicate) + '\n');
+
+  const originalReadFileSync = fs.readFileSync;
+  fs.readFileSync = function guardedReadFileSync(target, ...args) {
+    if (path.resolve(String(target)) === path.resolve(cachePath)) {
+      throw new Error('whole-file cache read is forbidden');
+    }
+    return originalReadFileSync.call(this, target, ...args);
+  };
+  try {
+    const result = compactEmbeddingCache({ cachePath, keepKeys: new Set([keep.key]) });
+    assert.equal(result.before, 2);
+    assert.equal(result.kept, 1);
+    assert.equal(result.removed, 1);
+    const rows = originalReadFileSync(cachePath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].vector, duplicate.vector);
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
+});
+
 test('compactEmbeddingCache without keepQueryMeta keeps only keepKeys', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'embed-cache-test-'));
   const cachePath = path.join(dir, 'cache.jsonl');
