@@ -39,6 +39,7 @@ EXPECTED_TEMPLATE_SCRIPTS = {
     "gemini_embedding_keychain.py",
     "knowledge_index_incremental.sh",
     "knowledge_search.sh",
+    "knowledge_snapshot_daily.sh",
     "post_run_check.mjs",
     "snapshot_knowledge_assets.py",
 }

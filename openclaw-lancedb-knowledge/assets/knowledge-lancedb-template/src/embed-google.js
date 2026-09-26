@@ -1,12 +1,39 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function ensureDir(p) { fs.mkdirSync(p, { recursive: true }); }
 function sha256(text) { return crypto.createHash('sha256').update(text).digest('hex'); }
 
 const DEDICATED_KEY_SOURCE = 'com.ansai.openclaw.gemini-embedding';
+const CACHE_READ_CHUNK_BYTES = 64 * 1024;
+
+function forEachJsonlLineSync(filePath, visitor) {
+  const fd = fs.openSync(filePath, 'r');
+  const decoder = new StringDecoder('utf8');
+  const chunk = Buffer.allocUnsafe(CACHE_READ_CHUNK_BYTES);
+  let pending = '';
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      pending += decoder.write(chunk.subarray(0, bytesRead));
+      let newline;
+      while ((newline = pending.indexOf('\n')) !== -1) {
+        const line = pending.slice(0, newline).replace(/\r$/, '');
+        pending = pending.slice(newline + 1);
+        if (line) visitor(line);
+      }
+    }
+    pending += decoder.end();
+    const finalLine = pending.replace(/\r$/, '');
+    if (finalLine) visitor(finalLine);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 export function resolveGoogleApiKey() {
   if (process.env.OPENCLAW_GEMINI_KEY_SOURCE !== DEDICATED_KEY_SOURCE) {
@@ -53,16 +80,15 @@ export class EmbeddingCache {
   }
   ensureLoaded() {
     if (this.loaded) return;
-    this.loaded = true;
     if (fs.existsSync(this.cachePath)) {
-      const lines = fs.readFileSync(this.cachePath, 'utf8').split(/\r?\n/).filter(Boolean);
-      for (const line of lines) {
+      forEachJsonlLineSync(this.cachePath, (line) => {
         try {
           const row = JSON.parse(line);
           if (row.key && Array.isArray(row.vector)) this.map.set(row.key, row.vector);
         } catch {}
-      }
+      });
     }
+    this.loaded = true;
   }
   get(key) {
     this.ensureLoaded();

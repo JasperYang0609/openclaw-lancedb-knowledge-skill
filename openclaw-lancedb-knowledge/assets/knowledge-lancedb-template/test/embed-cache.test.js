@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   cacheKey,
   compactEmbeddingCache,
+  EmbeddingCache,
   GoogleGeminiEmbedder,
   queryCachePathFor,
   resolveGoogleApiKey,
@@ -25,6 +26,31 @@ function makeRow({ text, taskType, model = MODEL, dimensions = DIMS }) {
   const key = cacheKey({ text, model, dimensions, taskType });
   return { key, row: { key, vector: [1, 2, 3], model, dimensions, taskType, cachedAt: '2026-07-06T00:00:00.000Z' } };
 }
+
+test('EmbeddingCache streams JSONL without loading the whole cache as one string', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'embed-cache-stream-test-'));
+  const cachePath = path.join(dir, 'cache.jsonl');
+  const key = 'streamed-cache-key';
+  fs.writeFileSync(cachePath, [
+    JSON.stringify({ ignored: true, padding: '界'.repeat(30_000) }),
+    JSON.stringify({ key, vector: [1, 2, 3] })
+  ].join('\n') + '\n');
+
+  const originalReadFileSync = fs.readFileSync;
+  fs.readFileSync = function guardedReadFileSync(target, ...args) {
+    if (path.resolve(String(target)) === path.resolve(cachePath)) {
+      throw new Error('whole-file cache read is forbidden');
+    }
+    return originalReadFileSync.call(this, target, ...args);
+  };
+  try {
+    const cache = new EmbeddingCache(cachePath);
+    assert.deepEqual(cache.get(key), [1, 2, 3]);
+    assert.equal(cache.loaded, true);
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
+});
 
 test('compactEmbeddingCache keeps query rows via keepQueryMeta and drops stale ones', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'embed-cache-test-'));
