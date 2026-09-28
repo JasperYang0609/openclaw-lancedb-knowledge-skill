@@ -2,8 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**", "fix/**"]
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -47,3 +52,6 @@ jobs:
       - name: Verify Gemini-only product boundary
         working-directory: .
         run: python3 scripts/check_gemini_product_boundary.py
+      - name: Verify CI workflow contract
+        working-directory: .
+        run: python3 tests/test_ci_workflow_contract.py
