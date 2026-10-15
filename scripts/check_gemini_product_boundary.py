@@ -46,6 +46,7 @@ EXPECTED_TEMPLATE_SCRIPTS = {
 
 EXPECTED_SKILL_SCRIPTS = {
     "bootstrap_openclaw_lancedb.py",
+    "onboard_openclaw_lancedb.py",
 }
 
 EXPECTED_PRODUCT_COMMANDS = {
@@ -73,6 +74,7 @@ def production_files() -> list[Path]:
         SKILL / "SKILL.md",
         SKILL / "references" / "architecture.md",
         SKILL / "scripts" / "bootstrap_openclaw_lancedb.py",
+        SKILL / "scripts" / "onboard_openclaw_lancedb.py",
         TEMPLATE / "config" / "source-map.example.json",
         TEMPLATE / "package.json",
     ]

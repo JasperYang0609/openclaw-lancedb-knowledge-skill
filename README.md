@@ -16,6 +16,68 @@ If your installer expects a packaged skill file, download:
 https://github.com/JasperYang0609/openclaw-lancedb-knowledge-skill/raw/main/dist/openclaw-lancedb-knowledge.skill
 ```
 
+## Guided onboarding (recommended)
+
+Installing the skill does **not** mean the knowledge base is ready. Start the
+installed `openclaw-lancedb-knowledge` skill and ask it to set up the knowledge
+base. The agent must guide you through one resumable onboarding flow and may
+report `READY` only after the live index, source-cited search, daily incremental
+job, and verified restore snapshot all pass.
+
+The agent asks for these inputs together:
+
+- the OpenClaw workspace and approved Markdown source folders;
+- whether Discord summaries are enough or raw messages are explicitly approved;
+- who approved sending redacted selected chunks to Google Gemini;
+- where local restore snapshots should be stored and which timezone to use;
+- approval for the initial Gemini embedding usage and the two local cron jobs.
+
+Never paste the Gemini API key into chat. On macOS, onboarding stops at a native
+hidden Keychain prompt and resumes after the dedicated credential canary passes.
+
+Manual/agent-readable flow from the installed skill directory:
+
+```bash
+# 1. Preview the exact scope. This makes no changes and calls no API.
+python3 scripts/onboard_openclaw_lancedb.py plan \
+  --workspace ~/.openclaw/workspace \
+  --backup-root "$HOME/Desktop/<server-backup>/channel-history" \
+  --project-root "$HOME/Desktop/Client_Project" \
+  --snapshot-root ~/.openclaw/backups/knowledge-lancedb \
+  --timezone <IANA_TIMEZONE> \
+  --install-cron
+
+# 2. Apply after privacy and cost approval. The first run bootstraps and scans,
+#    then returns BLOCKED with the exact native key-entry command when needed.
+python3 scripts/onboard_openclaw_lancedb.py apply \
+  --workspace ~/.openclaw/workspace \
+  --backup-root "$HOME/Desktop/<server-backup>/channel-history" \
+  --project-root "$HOME/Desktop/Client_Project" \
+  --project-name ClientProject \
+  --snapshot-root ~/.openclaw/backups/knowledge-lancedb \
+  --timezone <IANA_TIMEZONE> \
+  --approved-by "Client approved Google embeddings on YYYY-MM-DD" \
+  --accept-gemini-cost \
+  --install-cron \
+  --test-query "What is one documented project decision and its source?"
+
+# 3. Enter the key only through the native hidden prompt shown by onboarding,
+#    then rerun the same apply command. Finally perform a read-only verification.
+python3 scripts/onboard_openclaw_lancedb.py verify
+```
+
+Onboarding writes a non-secret `reports/onboarding-receipt.json` and uses only
+three terminal states:
+
+- `READY` — every required gate passed; the RAG workflow is usable.
+- `BLOCKED` — a required input or verification failed; follow `nextAction` and resume.
+- `PLAN` — preview only; no installation or external embedding call occurred.
+
+Automatic persistent credential onboarding currently supports macOS Keychain.
+Other operating systems fail closed instead of saving a plaintext API key. A
+reviewed credential backend is required before unattended cron can be marked
+`READY` on those systems.
+
 ## What it includes
 
 - Model-agnostic / Opus-readable skill instructions
@@ -37,6 +99,7 @@ https://github.com/JasperYang0609/openclaw-lancedb-knowledge-skill/raw/main/dist
 - Cron preflight that rejects legacy `payload.toolsAllow`, requires `--clear-tools`, and verifies GPT/Codex shell access with a temporary isolated canary
 - Supply-chain-safe bootstrap: fixed `npm ci --ignore-scripts` by default, explicit lifecycle-script opt-in, and a non-executing post-run checker
 - Dedicated Gemini key storage in macOS Keychain, with a hidden native prompt and no fallback to general OpenClaw provider credentials
+- Resumable guided onboarding with source preview, cost/privacy gates, first index, source-cited search, cron declarations, restore verification, and a machine-readable readiness receipt
 
 ## Quality and safety defaults
 
