@@ -43,6 +43,18 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def normalized_timestamp(value: Any) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise OnboardingError("Snapshot freshness timestamp is missing.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise OnboardingError("Snapshot freshness timestamp is invalid.") from exc
+    if parsed.tzinfo is None:
+        raise OnboardingError("Snapshot freshness timestamp must include a timezone.")
+    return parsed.astimezone(timezone.utc)
+
+
 def resolved_path(value: str) -> Path:
     return Path(os.path.abspath(Path(value).expanduser()))
 
@@ -194,6 +206,111 @@ def cron_commands(
         json.dumps(["/bin/bash", str(target / "scripts/knowledge_snapshot_daily.sh")]),
     ]
     return [(index_key, index), (snapshot_key, snapshot)]
+
+
+def command_option(command: list[str], option: str) -> str:
+    try:
+        index = command.index(option)
+        return command[index + 1]
+    except (ValueError, IndexError) as exc:
+        raise OnboardingError(f"Internal cron declaration is missing {option}.") from exc
+
+
+def command_options(command: list[str], option: str) -> list[str]:
+    values: list[str] = []
+    for index, value in enumerate(command):
+        if value == option:
+            if index + 1 >= len(command):
+                raise OnboardingError(f"Internal cron declaration is missing a value for {option}.")
+            values.append(command[index + 1])
+    return values
+
+
+def cron_job_matches(job: dict[str, Any], command: list[str]) -> bool:
+    try:
+        expected_env = dict(
+            value.split("=", 1)
+            for value in command_options(command, "--command-env")
+        )
+        expected_argv = json.loads(command_option(command, "--command-argv"))
+        expected_timeout = int(command_option(command, "--timeout-seconds"))
+        expected_output_max = int(command_option(command, "--output-max-bytes"))
+    except (ValueError, json.JSONDecodeError):
+        return False
+    schedule = job.get("schedule") if isinstance(job.get("schedule"), dict) else {}
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    return (
+        job.get("enabled") is True
+        and schedule.get("kind") == "cron"
+        and schedule.get("expr") == command_option(command, "--cron")
+        and schedule.get("tz") == command_option(command, "--tz")
+        and schedule.get("staggerMs") == 0
+        and payload.get("kind") == "command"
+        and payload.get("cwd") == command_option(command, "--command-cwd")
+        and payload.get("argv") == expected_argv
+        and payload.get("env") == expected_env
+        and payload.get("timeoutSeconds") == expected_timeout
+        and payload.get("outputMaxBytes") == expected_output_max
+    )
+
+
+def validate_cron_readback(
+    jobs: list[Any],
+    declarations: list[tuple[str, list[str]]],
+) -> list[str]:
+    by_key = {
+        job.get("declarationKey"): job
+        for job in jobs
+        if isinstance(job, dict) and isinstance(job.get("declarationKey"), str)
+    }
+    keys = [key for key, _command in declarations]
+    missing = [key for key in keys if key not in by_key]
+    if missing:
+        raise OnboardingError("OpenClaw cron readback is missing an onboarding declaration.")
+    mismatched = [
+        key
+        for key, command in declarations
+        if not cron_job_matches(by_key[key], command)
+    ]
+    if mismatched:
+        raise OnboardingError(
+            "An onboarding cron declaration does not match the approved schedule or command payload.",
+            next_action="Review the stale cron declaration, then rerun onboarding to reconcile it safely.",
+        )
+    return keys
+
+
+def validate_snapshot_payload(
+    payload: dict[str, Any],
+    *,
+    expected_rows: int,
+    expected_required_after: str,
+) -> str:
+    snapshot_path = payload.get("snapshot") or payload.get("snapshotPath") or payload.get("path")
+    restore = payload.get("restoreCanary") if isinstance(payload.get("restoreCanary"), dict) else {}
+    database = payload.get("database") if isinstance(payload.get("database"), dict) else {}
+    freshness = payload.get("freshness") if isinstance(payload.get("freshness"), dict) else {}
+    required_after_matches = (
+        normalized_timestamp(freshness.get("requiredAfter"))
+        == normalized_timestamp(expected_required_after)
+    )
+    if (
+        payload.get("ok") is not True
+        or not isinstance(snapshot_path, str)
+        or not snapshot_path
+        or freshness.get("pass") is not True
+        or not required_after_matches
+        or restore.get("ok") is not True
+        or restore.get("restoreCanary") is not True
+        or database.get("databaseOpenPass") is not True
+        or database.get("rowCountPass") is not True
+        or database.get("rows") != expected_rows
+        or database.get("expectedRows") != expected_rows
+    ):
+        raise OnboardingError(
+            "Snapshot validation did not prove checksum, freshness, isolated restore, database open, and row-count integrity."
+        )
+    return snapshot_path
 
 
 def plan_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -498,6 +615,13 @@ def run_gemini_gates(
 def run_snapshot(args: argparse.Namespace, target: Path, receipt: dict[str, Any]) -> None:
     snapshot_root = resolved_path(args.snapshot_root)
     snapshot_root.mkdir(parents=True, exist_ok=True)
+    expected_rows = int(receipt.get("checks", {}).get("initialIndex", {}).get("rows") or 0)
+    if expected_rows < 1:
+        raise OnboardingError("Initial index row count is unavailable for snapshot verification.")
+    manifest = load_json(target / "reports/incremental-manifest.latest.json")
+    required_after = manifest.get("indexedAt")
+    if not isinstance(required_after, str) or not required_after:
+        raise OnboardingError("Incremental manifest indexedAt is unavailable for snapshot freshness verification.")
     env = dict(os.environ)
     env["OPENCLAW_LANCEDB_ROOT"] = str(target)
     env["OPENCLAW_LANCEDB_SNAPSHOT_ROOT"] = str(snapshot_root)
@@ -508,15 +632,23 @@ def run_snapshot(args: argparse.Namespace, target: Path, receipt: dict[str, Any]
         env=env,
     )
     payload = parse_json_output(result.stdout, "verified snapshot")
-    snapshot_path = payload.get("snapshot") or payload.get("snapshotPath") or payload.get("path")
-    if payload.get("ok") is not True or not snapshot_path:
-        raise OnboardingError("Snapshot command did not return a verified snapshot path.")
+    snapshot_path = Path(validate_snapshot_payload(
+        payload,
+        expected_rows=expected_rows,
+        expected_required_after=required_after,
+    )).resolve()
+    expected_parent = (snapshot_root / "snapshots").resolve()
+    if not snapshot_path.is_dir() or snapshot_path.is_symlink() or snapshot_path.parent != expected_parent:
+        raise OnboardingError("Verified snapshot path is outside the approved snapshot root.")
     receipt["checks"]["restoreSnapshot"] = {
         "ok": True,
         "path": str(snapshot_path),
         "checksumVerified": True,
         "isolatedRestoreVerified": True,
         "databaseOpenVerified": True,
+        "rowCountVerified": True,
+        "rows": expected_rows,
+        "requiredAfter": required_after,
     }
 
 
@@ -534,37 +666,23 @@ def install_cron(args: argparse.Namespace, target: Path, receipt: dict[str, Any]
                 f"Installed OpenClaw does not support required cron option {option}.",
                 next_action="Upgrade OpenClaw, then rerun onboarding.",
             )
-    keys: list[str] = []
-    for key, command in cron_commands(
+    declarations = cron_commands(
         openclaw_bin=openclaw_bin,
         target=target,
         snapshot_root=resolved_path(args.snapshot_root),
         timezone_name=args.timezone,
         index_cron=args.index_cron,
         snapshot_cron=args.snapshot_cron,
-    ):
+    )
+    for key, command in declarations:
         result = run_command(command, timeout=60)
         parse_json_output(result.stdout, f"cron declaration {key}")
-        keys.append(key)
     listed = parse_json_output(
         run_command([openclaw_bin, "cron", "list", "--all", "--json"], timeout=60).stdout,
         "cron list",
     )
     jobs = listed.get("jobs") if isinstance(listed.get("jobs"), list) else []
-    by_key = {
-        job.get("declarationKey"): job
-        for job in jobs
-        if isinstance(job, dict) and isinstance(job.get("declarationKey"), str)
-    }
-    missing = [key for key in keys if key not in by_key]
-    if missing:
-        raise OnboardingError("OpenClaw cron readback is missing an onboarding declaration.")
-    disabled = [key for key in keys if by_key[key].get("enabled") is not True]
-    if disabled:
-        raise OnboardingError(
-            "An onboarding cron declaration exists but is disabled.",
-            next_action="Review and explicitly enable the two onboarding cron jobs, then rerun verification.",
-        )
+    keys = validate_cron_readback(jobs, declarations)
     receipt["checks"]["automation"] = {
         "ok": True,
         "timezone": args.timezone,
@@ -668,32 +786,68 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
     snapshot_tool = target / "scripts/snapshot_knowledge_assets.py"
     if not snapshot_path.is_absolute() or not snapshot_path.is_dir():
         raise OnboardingError("Verified snapshot path from the READY receipt is unavailable.")
+    snapshot_root = Path(str(receipt.get("snapshotRoot") or ""))
+    if not snapshot_root.is_absolute():
+        raise OnboardingError("READY receipt snapshot root is missing or not absolute.")
+    expected_rows = int(checks["restoreSnapshot"].get("rows") or 0)
+    if expected_rows < 1:
+        raise OnboardingError("READY receipt does not contain a verified snapshot row count.")
+    required_after = checks["restoreSnapshot"].get("requiredAfter")
+    if not isinstance(required_after, str) or not required_after:
+        raise OnboardingError("READY receipt does not contain the snapshot freshness baseline.")
     snapshot = parse_json_output(
         run_command(
-            [sys.executable, str(snapshot_tool), "--verify-snapshot", str(snapshot_path)],
+            [
+                sys.executable,
+                str(snapshot_tool),
+                "--verify-snapshot",
+                str(snapshot_path),
+                "--expected-snapshot-root",
+                str(snapshot_root),
+                "--restore-canary",
+                "--verify-db",
+                "--table-name",
+                "knowledge_chunks",
+                "--expected-row-count",
+                str(expected_rows),
+                "--require-after",
+                required_after,
+            ],
             cwd=target,
         ).stdout,
         "snapshot verification",
     )
-    if snapshot.get("ok") is not True:
-        raise OnboardingError("Current snapshot checksum verification failed.")
+    validate_snapshot_payload(
+        snapshot,
+        expected_rows=expected_rows,
+        expected_required_after=required_after,
+    )
 
     declaration_keys = checks["automation"].get("declarationKeys")
     if not isinstance(declaration_keys, list) or len(declaration_keys) != 2:
         raise OnboardingError("READY receipt does not contain both cron declaration keys.")
     openclaw_bin = require_executable("openclaw")
+    timezone_name = checks["automation"].get("timezone")
+    index_cron = checks["automation"].get("incrementalCron")
+    snapshot_cron = checks["automation"].get("snapshotCron")
+    if not all(isinstance(value, str) and value for value in (timezone_name, index_cron, snapshot_cron)):
+        raise OnboardingError("READY receipt does not contain complete cron configuration.")
+    declarations = cron_commands(
+        openclaw_bin=openclaw_bin,
+        target=target,
+        snapshot_root=snapshot_root,
+        timezone_name=timezone_name,
+        index_cron=index_cron,
+        snapshot_cron=snapshot_cron,
+    )
+    if [key for key, _command in declarations] != declaration_keys:
+        raise OnboardingError("READY receipt cron declaration keys do not match the managed target.")
     listed = parse_json_output(
         run_command([openclaw_bin, "cron", "list", "--all", "--json"], timeout=60).stdout,
         "cron list",
     )
     jobs = listed.get("jobs") if isinstance(listed.get("jobs"), list) else []
-    by_key = {
-        job.get("declarationKey"): job
-        for job in jobs
-        if isinstance(job, dict) and isinstance(job.get("declarationKey"), str)
-    }
-    if any(key not in by_key or by_key[key].get("enabled") is not True for key in declaration_keys):
-        raise OnboardingError("One or more onboarding cron declarations are missing or disabled.")
+    validate_cron_readback(jobs, declarations)
     return {
         "schemaVersion": 1,
         "status": "READY",

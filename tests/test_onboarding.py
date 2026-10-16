@@ -87,6 +87,79 @@ def main() -> None:
         assert "GEMINI_API_KEY" not in serialized
         assert "--tools" not in serialized
 
+        cron_jobs = []
+        for key, command in commands:
+            cron_jobs.append({
+                "declarationKey": key,
+                "enabled": True,
+                "schedule": {
+                    "kind": "cron",
+                    "expr": onboarding.command_option(command, "--cron"),
+                    "tz": onboarding.command_option(command, "--tz"),
+                    "staggerMs": 0,
+                },
+                "payload": {
+                    "kind": "command",
+                    "cwd": onboarding.command_option(command, "--command-cwd"),
+                    "argv": json.loads(onboarding.command_option(command, "--command-argv")),
+                    "env": dict(
+                        value.split("=", 1)
+                        for value in onboarding.command_options(command, "--command-env")
+                    ),
+                    "timeoutSeconds": int(onboarding.command_option(command, "--timeout-seconds")),
+                    "outputMaxBytes": int(onboarding.command_option(command, "--output-max-bytes")),
+                },
+            })
+        assert onboarding.validate_cron_readback(cron_jobs, commands) == keys
+        stale_cron_jobs = json.loads(json.dumps(cron_jobs))
+        stale_cron_jobs[0]["schedule"]["expr"] = "0 0 * * *"
+        try:
+            onboarding.validate_cron_readback(stale_cron_jobs, commands)
+        except onboarding.OnboardingError as exc:
+            assert "does not match" in str(exc)
+        else:
+            raise AssertionError("stale cron schedule must block READY")
+
+        snapshot_payload = {
+            "ok": True,
+            "snapshot": str(tmp / "snapshots" / "snapshots" / "daily-2026-10-15"),
+            "freshness": {"pass": True, "requiredAfter": "2026-10-15T00:00:00+00:00"},
+            "restoreCanary": {"ok": True, "restoreCanary": True},
+            "database": {
+                "databaseOpenPass": True,
+                "rowCountPass": True,
+                "rows": 4,
+                "expectedRows": 4,
+            },
+        }
+        assert onboarding.validate_snapshot_payload(
+            snapshot_payload,
+            expected_rows=4,
+            expected_required_after="2026-10-15T00:00:00Z",
+        ) == snapshot_payload["snapshot"]
+        invalid_snapshot_payload = json.loads(json.dumps(snapshot_payload))
+        invalid_snapshot_payload["database"]["rowCountPass"] = False
+        try:
+            onboarding.validate_snapshot_payload(
+                invalid_snapshot_payload,
+                expected_rows=4,
+                expected_required_after="2026-10-15T00:00:00Z",
+            )
+        except onboarding.OnboardingError as exc:
+            assert "row-count integrity" in str(exc)
+        else:
+            raise AssertionError("snapshot without row-count proof must block READY")
+        try:
+            onboarding.validate_snapshot_payload(
+                snapshot_payload,
+                expected_rows=4,
+                expected_required_after="2026-10-15T01:00:00+00:00",
+            )
+        except onboarding.OnboardingError as exc:
+            assert "freshness" in str(exc)
+        else:
+            raise AssertionError("snapshot with the wrong freshness baseline must block READY")
+
         receipt_path = tmp / "receipt.json"
         onboarding.atomic_write_json(receipt_path, {"status": "BLOCKED", "secretDisplayed": False})
         mode = stat.S_IMODE(receipt_path.stat().st_mode)
@@ -156,7 +229,16 @@ def main() -> None:
             receipt["checks"]["incrementalBaseline"] = {"ok": True}
 
         def snapshot_gate(_args: argparse.Namespace, _target: Path, receipt: dict[str, object]) -> None:
-            receipt["checks"]["restoreSnapshot"] = {"ok": True, "path": "/tmp/fixture-snapshot"}
+            receipt["checks"]["restoreSnapshot"] = {
+                "ok": True,
+                "path": "/tmp/fixture-snapshot",
+                "checksumVerified": True,
+                "isolatedRestoreVerified": True,
+                "databaseOpenVerified": True,
+                "rowCountVerified": True,
+                "rows": 4,
+                "requiredAfter": "2026-10-15T00:00:00+00:00",
+            }
 
         def cron_gate(_args: argparse.Namespace, _target: Path, receipt: dict[str, object]) -> None:
             receipt["checks"]["automation"] = {"ok": True, "declarationKeys": ["index", "snapshot"]}
