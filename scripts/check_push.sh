@@ -6,10 +6,13 @@ cd "$repo_root"
 
 python3 -m py_compile \
   openclaw-lancedb-knowledge/scripts/bootstrap_openclaw_lancedb.py \
+  openclaw-lancedb-knowledge/scripts/onboard_openclaw_lancedb.py \
   openclaw-lancedb-knowledge/assets/knowledge-lancedb-template/scripts/snapshot_knowledge_assets.py \
   scripts/check_dangerous_exec.py \
   scripts/build_skill_archive.py \
   tests/test_ci_workflow_contract.py
+
+python3 tests/test_onboarding.py
 
 (
   cd openclaw-lancedb-knowledge/assets/knowledge-lancedb-template

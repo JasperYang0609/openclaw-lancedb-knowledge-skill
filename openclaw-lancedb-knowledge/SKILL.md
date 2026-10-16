@@ -32,6 +32,68 @@ Design every client-facing instruction so a general LLM can follow it without kn
 - Assume many clients will use Claude Opus or another capable LLM to read the skill; make the workflow model-agnostic and source-grounded.
 - Keep OpenClaw-specific behavior named as OpenClaw-specific, and provide a generic fallback when possible.
 
+## Mandatory onboarding mode for a new installation
+
+Do not treat skill installation, template copying, or a successful dependency
+install as a usable RAG deployment. For a new installation, guide the user to a
+verified `READY` receipt.
+
+Ask for the following decisions in one consolidated message:
+
+- OpenClaw workspace path;
+- approved Discord backup-summary and project-document roots, if any;
+- whether raw Discord messages are required and explicitly approved;
+- the human/organization approval note for sending redacted selected chunks to Google Gemini;
+- snapshot root, timezone, and approval to install the two local cron jobs;
+- approval for the initial Gemini embedding API usage and cost;
+- one natural-language question whose answer exists in the selected corpus.
+
+Never ask the user to paste an API key into chat, a command argument, a config
+file, or an environment variable. Use the dedicated native hidden credential
+prompt. Do not reuse a general OpenClaw provider credential.
+
+From this installed skill directory, first show the non-mutating plan:
+
+```bash
+python3 scripts/onboard_openclaw_lancedb.py plan \
+  --workspace <WORKSPACE> \
+  --backup-root <APPROVED_BACKUP_ROOT> \
+  --project-root <APPROVED_PROJECT_ROOT> \
+  --snapshot-root <SNAPSHOT_ROOT> \
+  --timezone <IANA_TIMEZONE> \
+  --install-cron
+```
+
+After the user approves the displayed source scope and Gemini cost, run `apply`
+with the same paths plus `--approved-by`, `--accept-gemini-cost`,
+`--install-cron`, and a corpus-grounded `--test-query`. The first run is
+resumable: if the dedicated key is absent, it bootstraps and scans safely, then
+returns `BLOCKED` with the exact native Keychain command. Have the user enter the
+key locally through that hidden prompt, rerun the same `apply` command, and then
+run:
+
+```bash
+python3 scripts/onboard_openclaw_lancedb.py verify --target <TARGET>
+```
+
+Only report **RAG STATUS: READY** when `reports/onboarding-receipt.json` says
+`READY` and the read-only verification also returns `READY`. `READY` requires:
+
+- `google-gemini / gemini-embedding-001 / 768` identity;
+- at least one approved document and chunk;
+- credential canary;
+- readable first index plus exact coverage audit;
+- at least one natural-language result with a source path;
+- idempotently declared daily incremental and snapshot cron jobs;
+- a checksummed snapshot that passed isolated restore, database open, and row-count verification.
+
+When onboarding returns `BLOCKED`, quote only the safe error and `nextAction`.
+Never bypass a missing approval, silently remove an input source, switch models,
+save a plaintext key, or call an incomplete installation `READY`. Automatic
+persistent credential onboarding currently supports macOS Keychain; other
+platforms remain `BLOCKED` until a reviewed persistent credential backend is
+configured.
+
 ## Default workflow
 
 1. **Confirm scope and privacy.** Identify the workspace, backup summary root, and project-doc roots. If using external embeddings, get explicit approval because redacted private chunks leave the machine.

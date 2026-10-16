@@ -22,6 +22,7 @@ for required in (
     "workflow_dispatch:",
     "cancel-in-progress: true",
     "python3 tests/test_bootstrap_security.py",
+    "python3 tests/test_onboarding.py",
     "python3 tests/test_gemini_product_boundary.py",
     "python3 tests/test_snapshot_knowledge_assets.py",
     "python3 scripts/check_dangerous_exec.py",
